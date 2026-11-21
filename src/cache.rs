@@ -31,9 +31,10 @@ pub const MAGIC: &[u8; 4] = b"VTBC";
 /// v4 新增依赖清单段（约定式 import，ADR-017）：记录主脚本 import 的
 /// 文件路径与内容 hash，`load_cached`/`compile_cached` 加载时逐一校验，
 /// 任一依赖变更 → 缓存失效重建。wire 布局仅在末尾追加，VERSION 3→4。
-/// ADR-018：签名类型新增 `Ty::Arr`（write_ty tag 9），VERSION 4→5 强制重建，
-/// 防旧缓存与新语义混用。
-pub const VERSION: u16 = 5;
+/// ADR-018：签名类型新增 `Ty::Arr`（write_ty tag 9），VERSION 4→5 强制重建。
+/// D-046 5.2：末尾追加拼接视图源码段（带依赖的脚本缓存命中后 report
+/// 才有源码行/caret），VERSION 5→6 强制重建。
+pub const VERSION: u16 = 6;
 
 /// (name, slot id, params, ret), sorted by name. `CallHost` instructions embed
 /// the slot id, so both the set of functions and their order must be stable.
@@ -511,6 +512,11 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
         w.u64(*hash);
         w.u8(u8::from(*is_file));
     }
+
+    // 拼接视图源码段（v6，D-046 5.2）：带依赖的脚本走缓存命中后，
+    // `Script::report` 的源码行 / caret 必须对得上拼接视图的行号——v5 及
+    // 之前缓存里没有源码，命中后 report 只有一行消息。
+    w.str(&script.source);
     w.0
 }
 
@@ -524,9 +530,19 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
     let source_hash = r.u64()?;
     let name = r.str()?;
 
+    // 容量合理性（D-046 3.6）：计数上界用【剩余字节】而不是文件总长——
+    // 旧检查 `n > bytes.len()` 让 1 MiB 文件可声明百万条记录，在读取任何
+    // 一条之前 with_capacity 就分配 ~100× 放大。每条记录至少 8 字节
+    // （最短的是 id 表：len(4)+1 字符+u16），按此封顶预分配；超出部分
+    // 由逐条读取的截断检查兜底。
+    fn plausible_cap(n: usize, bytes: &[u8], pos: usize) -> usize {
+        let remain = bytes.len().saturating_sub(pos);
+        n.min(remain / 8)
+    }
+
     let n_fp = r.u32()? as usize;
     if n_fp > bytes.len() { return Err(Error::io("cache: implausible registry size")); }
-    let mut cached_fp = Vec::with_capacity(n_fp);
+    let mut cached_fp = Vec::with_capacity(plausible_cap(n_fp, bytes, r.pos));
     for _ in 0..n_fp {
         let n = r.str()?;
         let id = r.u16()?;
@@ -540,7 +556,7 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
 
     let n_sigs = r.u32()? as usize;
     if n_sigs > bytes.len() { return Err(Error::io("cache: implausible signature table size")); }
-    let mut sigs = SigTable::with_capacity(n_sigs);
+    let mut sigs = SigTable::with_capacity(plausible_cap(n_sigs, bytes, r.pos));
     for _ in 0..n_sigs {
         let n = r.str()?;
         sigs.insert(n, read_sig(&mut r)?);
@@ -548,19 +564,19 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
 
     let n_strings = r.u32()? as usize;
     if n_strings > bytes.len() { return Err(Error::io("cache: implausible string pool size")); }
-    let mut strings: Vec<Rc<str>> = Vec::with_capacity(n_strings);
+    let mut strings: Vec<Rc<str>> = Vec::with_capacity(plausible_cap(n_strings, bytes, r.pos));
     for _ in 0..n_strings { strings.push(Rc::from(r.str()?.as_str())); }
 
     let n_funcs = r.u32()? as usize;
     if n_funcs > bytes.len() { return Err(Error::io("cache: implausible function count")); }
-    let mut funcs: Vec<Function> = Vec::with_capacity(n_funcs);
+    let mut funcs: Vec<Function> = Vec::with_capacity(plausible_cap(n_funcs, bytes, r.pos));
     for _ in 0..n_funcs {
         let fname = r.str()?;
         let nregs = r.u16()?;
         let sig = read_sig(&mut r)?;
         let n_code = r.u32()? as usize;
         if n_code > bytes.len() { return Err(Error::io("cache: implausible code length")); }
-        let mut code = Vec::with_capacity(n_code);
+        let mut code = Vec::with_capacity(plausible_cap(n_code, bytes, r.pos));
         for _ in 0..n_code {
             code.push(read_instr(&mut r, nregs, n_code, n_funcs, n_strings, nhost)?);
         }
@@ -569,43 +585,92 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
 
     let n_ids = r.u32()? as usize;
     if n_ids > bytes.len() { return Err(Error::io("cache: implausible id table size")); }
-    let mut ids: HashMap<String, FuncId> = HashMap::with_capacity(n_ids);
+    let mut ids: HashMap<String, FuncId> = HashMap::with_capacity(plausible_cap(n_ids, bytes, r.pos));
     for _ in 0..n_ids {
         let n = r.str()?;
         ids.insert(n, r.u16()?);
     }
 
     // 依赖清单（v4，约定式 import）：路径（或 resolver 名字）+ 内容 hash +
-    // 来源标记。硬校验：依赖路径禁 '..' 组件——恶意构造的 .sbc 不能借
-    // 依赖校验（deps_fresh 按路径读文件）做任意路径探测。
+    // 来源标记。硬校验：依赖路径禁 '..' 组件与控制字符——恶意构造的 .sbc
+    // 不能借依赖校验（deps_fresh 按路径读文件）做任意路径探测（D-046 3.7）。
+    // 注意依赖路径存的是 resolve 后的真实路径（可以是绝对路径），所以这里
+    // 不能禁绝对路径——包含性收敛在 deps_fresh 里按 import_dir 做。
     let n_deps = r.u32()? as usize;
     if n_deps > bytes.len() { return Err(Error::io("cache: implausible dependency count")); }
-    let mut deps = Vec::with_capacity(n_deps);
+    let mut deps = Vec::with_capacity(plausible_cap(n_deps, bytes, r.pos));
     for _ in 0..n_deps {
         let path = r.str()?;
         let hash = r.u64()?;
         let is_file = r.u8()?;
         if is_file > 1 { return Err(Error::io("cache: invalid dependency flag")); }
+        if path.is_empty() || path.chars().any(|c| c.is_control()) {
+            return Err(Error::io("cache: dependency path contains control characters"));
+        }
         if path.split(['/', '\\']).any(|c| c == "..") {
             return Err(Error::io("cache: dependency path contains '..'"));
         }
         deps.push((path, hash, is_file == 1));
     }
 
+    // 拼接视图源码段（v6）：见 encode 侧注释。`r.str()` 自带长度头与
+    // 越界检查，无需再带独立的长度字段。
+    let source: Rc<str> = Rc::from(r.str()?.as_str());
+
     if r.pos != bytes.len() {
         return Err(Error::io("cache: trailing bytes"));
     }
 
+    // ---- 语义校验（D-046 5.7）：结构合法 ≠ 语义一致 ----
+    // 1) 签名里不允许出现推断变量：typecheck 承诺 Var 不会逃逸，解码出的
+    //    Var 会让 `type_matches` 的 `(_, Ty::Var(_)) => true` 放行任意值，
+    //    函数体却按 I64 位解释——静默错值。
+    fn assert_no_var(ty: &Ty) -> Result<()> {
+        match ty {
+            Ty::Var(_) => Err(Error::io("cache: signature contains an inference variable")),
+            Ty::Tuple(ts) => ts.iter().try_for_each(assert_no_var),
+            Ty::Arr(t) => assert_no_var(t),
+            _ => Ok(()),
+        }
+    }
+    for sig in sigs.values() {
+        sig.params.iter().try_for_each(assert_no_var)?;
+        assert_no_var(&sig.ret)?;
+    }
+    // 2) sigs ↔ funcs 一致：`Engine::call` 用 sigs 做 coerce，VM 用 funcs
+    //    做位解释——两者独立可篡改，必须逐项相等。
+    for f in &funcs {
+        if let Some(sig) = sigs.get(&f.name) {
+            if sig.params != f.params || sig.ret != f.ret {
+                return Err(Error::io(format!(
+                    "cache: signature mismatch for `{}` between sig table and function body",
+                    f.name
+                )));
+            }
+        }
+    }
+    // 3) ids 必须是名字 → 函数的双射：入口名映射到任意函数（同 arity）
+    //    会静默调错代码。
+    if ids.len() != funcs.len() {
+        return Err(Error::io("cache: id table does not cover every function"));
+    }
+    for (n, &id) in &ids {
+        match funcs.get(id as usize) {
+            Some(f) if f.name == *n => {}
+            _ => return Err(Error::io("cache: id table maps a name to a foreign function")),
+        }
+    }
+
     let program = Program { funcs, ids, strings };
     validate::validate(&program, nhost)?;
+
     Ok(Script {
         code: program,
         sigs,
         name,
         source_hash,
-        // `.sbc` does not embed the source; a caller that has it (the
-        // `compile_cached` path) fills this in so `Script::report` works.
-        source: Rc::from(""),
+        source,
         deps,
+        host_fp: fp.clone(),
     })
 }

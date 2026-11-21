@@ -130,6 +130,11 @@ pub struct Script {
     /// 缓存自动失效重建。resolver 来源的依赖由宿主自行决定失效时机。
     /// `load_str` 场景没有依赖，为空。
     pub deps: Vec<(String, u64, bool)>,
+    /// 编译时宿主注册表的指纹（D-046 3.8）。缓存路径的指纹校验只存在于
+    /// `cache::decode`——内存里的 `Script` 拿到别的 `Engine` 上调用时，
+    /// `CallHost` 的槽位 id 会打到**另一个宿主的函数**（类型桥保证不 UB，
+    /// 保证不了"调对了函数"）。`Engine::call` 用它做 O(n) 比对。
+    pub host_fp: crate::cache::HostFingerprint,
 }
 
 impl Script {
@@ -259,6 +264,11 @@ impl Engine {
         self
     }
 
+    /// 本引擎宿主注册表的指纹（缓存构建/校验、脚本归属判断用）。
+    pub fn fingerprint(&self) -> crate::cache::HostFingerprint {
+        self.host.fingerprint()
+    }
+
     /// Cap the bytes a script may allocate inside the VM (strings only —
     /// handles are host-owned and never copied).
     pub fn with_heap_limit(mut self, bytes: u64) -> Self {
@@ -323,6 +333,7 @@ impl Engine {
             // 拼接视图（含依赖源码）：报错行号按它算，渲染与行号对得上
             source: Rc::from(combined.as_str()),
             deps,
+            host_fp: self.host.fingerprint(),
         })
     }
 
@@ -396,15 +407,14 @@ impl Engine {
         if let Ok(bytes) = std::fs::read(path) {
             if let Ok(mut script) = self.script_from_bytes(&bytes) {
                 // 主源码 hash + 每个依赖文件 hash 全部命中才算缓存有效——
-                // 改一个 lib 文件，依赖它的脚本缓存自动失效重建
-                if script.source_hash == hash && ImportLoader::deps_fresh(&script.deps) {
+                // 改一个 lib 文件，依赖它的脚本缓存自动失效重建。deps_fresh
+                // 按 import_dir 做包含性收敛（D-046 3.7）。
+                if script.source_hash == hash
+                    && ImportLoader::deps_fresh(&script.deps, self.import_dir.as_deref())
+                {
                     script.name = name.into();
-                    // A cache hit still reports against the caller's source.
-                    // 有依赖的脚本保留缓存内的拼接视图源码（报错行号按它算）；
-                    // 无依赖时才用调用方源码刷新（等价于拼接视图）。
-                    if script.deps.is_empty() {
-                        script.source = Rc::from(src);
-                    }
+                    // v6 起缓存携带拼接视图源码（D-046 5.2），命中后
+                    // report 的源码行 / caret 直接可用。
                     return Ok(script);
                 }
             }
@@ -435,6 +445,14 @@ impl Engine {
 
     /// Call a script function with runtime values.
     pub fn call(&self, script: &Script, name: &str, args: Vec<Value>) -> Result<Value> {
+        // 指纹比对（D-046 3.8）：跨 Engine 复用编译产物会静默调错宿主函数
+        // ——缓存路径有 decode 的指纹校验兜底，内存路径此前完全没有。
+        if script.host_fp != self.host.fingerprint() {
+            return Err(Error::runtime(
+                "script was compiled against a different host registry; \
+                 recompile it on this engine",
+            ));
+        }
         // Coerce args to the declared parameter types (e.g. host passes i64 to
         // a parameter inferred as f64). Same semantics as the phase-1 evaluator.
         let sig = script.sigs.get(name).ok_or_else(|| {
@@ -834,10 +852,25 @@ impl<'a> ImportLoader<'a> {
     /// 读不到或内容变了 → 缓存失效，重建会重新走 import 解析并如实报错）。
     /// resolver 来源依赖无路径可校验——失效判定由宿主 resolver 自行决定，
     /// 校验跳过（诚实限制：resolver 内容变更不会触发缓存重建）。
-    fn deps_fresh(deps: &[(String, u64, bool)]) -> bool {
+    ///
+    /// 包含性收敛（D-046 3.7）：依赖路径存的是 resolve 后的真实路径（可
+    /// 以是绝对路径），恶意构造的 .sbc 借它做任意路径探测的口子在
+    /// `cache::decode` 只拦了 `..`/控制字符——这里用 import_dir 重做与
+    /// 编译期 `resolve` 同款的 canonicalize 包含检查，探测被收敛到宿主
+    /// 声明的目录树内。import_dir 未配置却有文件依赖的缓存一律判失效
+    /// （合法路径不可能产生这种组合：无目录时 import 编译直接报错）。
+    fn deps_fresh(deps: &[(String, u64, bool)], import_dir: Option<&Path>) -> bool {
+        let canon_dir = import_dir.and_then(|d| std::fs::canonicalize(d).ok());
         deps.iter().all(|(path, hash, is_file)| {
             if !*is_file {
                 return true;
+            }
+            match &canon_dir {
+                Some(cd) => match std::fs::canonicalize(path) {
+                    Ok(cp) if cp.starts_with(cd) => {}
+                    _ => return false,
+                },
+                None => return false,
             }
             std::fs::read_to_string(path)
                 .map(|text| cache::hash_source(&text) == *hash)

@@ -153,6 +153,11 @@ pub struct Vm<'a> {
     heap_bytes: u64,
     /// Hard cap; allocation beyond it aborts the script instead of the process.
     max_heap: u64,
+    /// O(n) 内建（len/contains/substr/concat/字符串比较）产生的额外 gas
+    /// （D-046 3.4）：一条指令计 1 步会让 `max_steps` 与真实工作量脱钩——
+    /// `len(4MiB 串)` 循环 1000 万轮只烧 4000 万步，宿主线程实际扫了
+    /// 10^13 个字符。计费单位在指令内累积、由 run 循环顶部折叠进 steps。
+    pending: u64,
 }
 
 impl<'a> Vm<'a> {
@@ -175,6 +180,7 @@ impl<'a> Vm<'a> {
             max_depth,
             heap_bytes: 0,
             max_heap,
+            pending: 0,
         }
     }
 
@@ -195,6 +201,14 @@ impl<'a> Vm<'a> {
             )));
         }
         Ok(())
+    }
+
+    /// O(n) 指令的工作量计费（D-046 3.4）。单位按操作数长度折算：真实
+    /// 扫描是字节级，这里 1 gas ≈ 64 字节——足够让"1 步指令 × 海量轮次"
+    /// 的放大攻击被 `max_steps` 提前拦住，又不影响正常脚本的预算体感。
+    #[inline]
+    fn charge_work(&mut self, units: u64) {
+        self.pending = self.pending.saturating_add(units / 64 + 1);
     }
 
     /// Execute `func` with already-coerced argument values.
@@ -234,6 +248,14 @@ impl<'a> Vm<'a> {
         self.frames.clear();
         self.heap.truncate(self.program.strings.len());
         self.heap_bytes = 0;
+
+        // 内存配额覆盖三块此前的盲区（D-046 3.5）：
+        // (b) 常量池入账——池在 Vm::new 每次 call 全量物化，此前配额为 0；
+        // (a) 初始寄存器窗口按 8 字节/槽计费——恶意 .sbc 的 65535 窗口
+        //     ×256 深度 ≈ 128 MiB 的上界从此受 max_heap 约束。
+        let pool_bytes: usize = self.program.strings.iter().map(|s| s.len()).sum();
+        self.charge(pool_bytes)?;
+        self.charge(nregs * std::mem::size_of::<Slot>())?;
 
         self.regs.clear();
         self.regs.resize(nregs, Slot(0));
@@ -471,12 +493,37 @@ impl<'a> Vm<'a> {
                 }
 
                 // ---- string comparisons ----
-                Op::EqStr { dst, a, b } => self.cmp_str(base, dst, a, b, instr.span(), |x, y| x == y)?,
-                Op::NeStr { dst, a, b } => self.cmp_str(base, dst, a, b, instr.span(), |x, y| x != y)?,
-                Op::LtStr { dst, a, b } => self.cmp_str(base, dst, a, b, instr.span(), |x, y| x < y)?,
-                Op::LeStr { dst, a, b } => self.cmp_str(base, dst, a, b, instr.span(), |x, y| x <= y)?,
-                Op::GtStr { dst, a, b } => self.cmp_str(base, dst, a, b, instr.span(), |x, y| x > y)?,
-                Op::GeStr { dst, a, b } => self.cmp_str(base, dst, a, b, instr.span(), |x, y| x >= y)?,
+                // 比较臂各自结算 O(n) 计费（3.4）——见 cmp_str 的注释
+                Op::EqStr { dst, a, b } => {
+                    let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x == y)?;
+                    steps = steps.saturating_add(w);
+                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                }
+                Op::NeStr { dst, a, b } => {
+                    let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x != y)?;
+                    steps = steps.saturating_add(w);
+                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                }
+                Op::LtStr { dst, a, b } => {
+                    let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x < y)?;
+                    steps = steps.saturating_add(w);
+                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                }
+                Op::LeStr { dst, a, b } => {
+                    let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x <= y)?;
+                    steps = steps.saturating_add(w);
+                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                }
+                Op::GtStr { dst, a, b } => {
+                    let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x > y)?;
+                    steps = steps.saturating_add(w);
+                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                }
+                Op::GeStr { dst, a, b } => {
+                    let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x >= y)?;
+                    steps = steps.saturating_add(w);
+                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                }
 
                 // ---- handle identity ----
                 // Object identity, not heap-slot identity: every argument and
@@ -506,8 +553,16 @@ impl<'a> Vm<'a> {
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::Concat { dst, a, b } => {
-                    // Build the string before charging so the borrow of `heap`
-                    // ends before the mutable allocation below.
+                    // 先按结果长度计费再分配（D-046 3.5c）：旧实现注释明说
+                    // "先建串再计费"——临时分配峰值不受配额约束。 gas 同步
+                    // 按长度计（3.4）。
+                    let (xlen, ylen) = {
+                        let x = self.heap_str(self.regs[base + a as usize].as_heap(), instr.span())?;
+                        let y = self.heap_str(self.regs[base + b as usize].as_heap(), instr.span())?;
+                        (x.len(), y.len())
+                    };
+                    self.charge_work((xlen + ylen) as u64);
+                    self.charge(xlen + ylen)?;
                     let joined = {
                         let x = self.heap_str(self.regs[base + a as usize].as_heap(), instr.span())?;
                         let y = self.heap_str(self.regs[base + b as usize].as_heap(), instr.span())?;
@@ -516,8 +571,17 @@ impl<'a> Vm<'a> {
                         s.push_str(y);
                         s
                     };
-                    let slot = self.intern_runtime_str(joined)?;
-                    self.regs[base + dst as usize] = slot;
+                    // 直接入堆（concat 已计费，跳过 intern 的二次计费）
+                    let idx = self.heap.len();
+                    self.heap.push(HeapObj::Str(Rc::from(joined)));
+                    self.regs[base + dst as usize] = Slot::heap(idx);
+                    // O(n) 计费结算（3.4）：所有充电点都在 CallBuiltin /
+                    // Concat 臂内，臂尾结算覆盖全部充电、无逃逸；循环顶部
+                    // 保持零开销（紧循环如 sum_to 不付任何代价）。
+                    steps = steps.saturating_add(std::mem::take(&mut self.pending));
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
 
                 // ---- control flow ----
@@ -629,6 +693,14 @@ impl<'a> Vm<'a> {
                         argv[i] = self.regs[base + args.get(i) as usize];
                     }
                     if self.regs.len() < nbase + nregs {
+                        // 寄存器文件按【实际增长】计费（D-046 3.5a）：扁平
+                        // 寄存器文件被所有帧共享，真实内存 = 最深层栈 × 窗口
+                        // 宽度——按调用次数计费会把 fib 这类合法递归误杀。
+                        // nregs 因"寄存器只增不复用"极易做大（65535 窗口 ×
+                        // 256 深度 ≈ 128 MiB 上界），现在受 max_heap 约束。
+                        let delta = (nbase + nregs - self.regs.len())
+                            * std::mem::size_of::<Slot>();
+                        self.charge(delta)?;
                         self.regs.resize(nbase + nregs, Slot(0));
                     }
                     for i in 0..n {
@@ -666,6 +738,14 @@ impl<'a> Vm<'a> {
                 Op::CallBuiltin { func, args, dst } => {
                     let slot = self.invoke_builtin(base, func, &args, instr.span())?;
                     self.regs[base + dst as usize] = slot;
+                    // O(n) 计费结算（3.4）：len/contains/substr/比较内建的
+                    // 字符扫描按操作数长度折算 pending，在此结算并检查——
+                    // 比较指令（EqStr 等）经由 cmp_str 充电，下一次任何
+                    // CallBuiltin/Concat 臂也会清账；纯算术循环零开销。
+                    steps = steps.saturating_add(std::mem::take(&mut self.pending));
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
 
                 // ---- tuples ----
@@ -761,16 +841,24 @@ impl<'a> Vm<'a> {
         b: Reg,
         span: Span,
         f: F,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         // 无拷贝比较（D-046 4.3）：旧实现的两次 `to_string` 是纯浪费——
         // NLL 下读操作放块里，借用随块结束释放，写寄存器在块外照常进行。
+        // O(n) 扫描按两串长度计 gas（3.4）：返回计费值，由六个比较臂各自
+        // 结算（比较指令不在 CallBuiltin 臂内，写 self.pending 会逃逸）。
+        let (xlen, ylen) = {
+            let x = self.heap_str(self.regs[base + a as usize].as_heap(), span)?;
+            let y = self.heap_str(self.regs[base + b as usize].as_heap(), span)?;
+            (x.len(), y.len())
+        };
+        let work = (xlen + ylen) as u64 / 64 + 1;
         let r = {
             let x = self.heap_str(self.regs[base + a as usize].as_heap(), span)?;
             let y = self.heap_str(self.regs[base + b as usize].as_heap(), span)?;
             f(x, y)
         };
         self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
-        Ok(())
+        Ok(work)
     }
 
     fn gather_values(&self, base: usize, args: &Regs, tys: &[crate::ty::Ty]) -> Result<Vec<Value>> {
@@ -922,6 +1010,17 @@ impl<'a> Vm<'a> {
             },
             Ty::Tuple(ts) => match self.heap.get(slot.as_heap()) {
                 Some(HeapObj::Tuple(items)) => {
+                    // 精确匹配（D-046 5.3）：旧实现 `zip` 按短侧截断——
+                    // 堆里 3 元、签名 1 元时返回 `(1)`，后两个元素静默消失，
+                    // 且与参考解释器（原样返回）分歧。编译产物由 typecheck
+                    // 保证两侧相等，这里只拦不一致的构造。
+                    if items.len() != ts.len() {
+                        return Err(Error::runtime(format!(
+                            "tuple arity mismatch: signature declares {}, value has {}",
+                            ts.len(),
+                            items.len()
+                        )));
+                    }
                     let mut vals = Vec::with_capacity(items.len());
                     for (item, t) in items.iter().zip(ts.iter()) {
                         vals.push(self.slot_to_value(*item, t)?);
@@ -1006,12 +1105,13 @@ impl<'a> Vm<'a> {
                 // Polymorphic since ADR-018: str (chars) / tuple / array
                 // (elements). The checker restricts calls to these three.
                 let idx = self.regs[at(0)].as_heap();
-                let r = match self.heap.get(idx) {
-                    Some(HeapObj::Str(s)) => s.chars().count(),
-                    Some(HeapObj::Tuple(items)) => items.len(),
-                    Some(HeapObj::Arr(items)) => items.len(),
+                let (r, work) = match self.heap.get(idx) {
+                    Some(HeapObj::Str(s)) => (s.chars().count(), s.len() as u64),
+                    Some(HeapObj::Tuple(items)) => (items.len(), 0),
+                    Some(HeapObj::Arr(items)) => (items.len(), 0),
                     _ => return Err(err_at("len expects a str, tuple or array", span)),
                 };
+                self.charge_work(work); // 字符串的 O(n) 扫描计 gas（3.4）
                 Ok(Slot::i64(r as i64))
             }
             CONTAINS => {
@@ -1020,23 +1120,29 @@ impl<'a> Vm<'a> {
                 }
                 let hay_idx = self.regs[at(0)].as_heap();
                 let needle = self.regs[at(1)];
-                match self.heap.get(hay_idx) {
+                // 先算结果与工作量、释放借用、再计费（3.4）。
+                let found = match self.heap.get(hay_idx) {
                     // String: substring containment, zero-copy（D-046 4.3；
                     // 旧实现每次调用 to_string 两份全量拷贝）。
                     Some(HeapObj::Str(s)) => {
                         let needle_idx = self.regs[at(1)].as_heap();
                         let needle_s = self.heap_str(needle_idx, span)?;
-                        Ok(Slot(if s.contains(needle_s) { 1 } else { 0 }))
+                        let found = s.contains(needle_s);
+                        (found, s.len() as u64)
                     }
                     // Array/tuple: element scan with structural equality.
-                    Some(HeapObj::Arr(items)) => Ok(Slot(
-                        if items.iter().any(|e| self.slots_equal(*e, needle)) { 1 } else { 0 },
-                    )),
-                    Some(HeapObj::Tuple(items)) => Ok(Slot(
-                        if items.iter().any(|e| self.slots_equal(*e, needle)) { 1 } else { 0 },
-                    )),
-                    _ => Err(err_at("contains expects a str or array", span)),
-                }
+                    Some(HeapObj::Arr(items)) => (
+                        items.iter().any(|e| self.slots_equal(*e, needle)),
+                        items.len() as u64,
+                    ),
+                    Some(HeapObj::Tuple(items)) => (
+                        items.iter().any(|e| self.slots_equal(*e, needle)),
+                        items.len() as u64,
+                    ),
+                    _ => return Err(err_at("contains expects a str or array", span)),
+                };
+                self.charge_work(found.1);
+                Ok(Slot(if found.0 { 1 } else { 0 }))
             }
             SUBSTR => {
                 if n != 3 {
@@ -1046,11 +1152,13 @@ impl<'a> Vm<'a> {
                 // 每次调用 4 字节/char 的中间分配）；`start + len` 的加法
                 // 也随之消失——它在 32 位目标上是真实的溢出点
                 // （`i64::MAX as usize` 截断回绕后 st>end → slice panic，
-                // D-046 3.10）。
-                let out = {
-                    let s = self.heap_str(self.regs[at(0)].as_heap(), span)?;
-                    let start = self.regs[at(1)].as_i64().max(0) as usize;
-                    let len = self.regs[at(2)].as_i64().max(0) as usize;
+                // D-046 3.10）。O(n) 扫描按源串长度计 gas（3.4）。
+                let src_idx = self.regs[at(0)].as_heap();
+                let start = self.regs[at(1)].as_i64().max(0) as usize;
+                let len = self.regs[at(2)].as_i64().max(0) as usize;
+                // 先量长度并计 gas（3.4），释放借用后再取子串。
+                let (st, en, work) = {
+                    let s = self.heap_str(src_idx, span)?;
                     let st = s.char_indices().nth(start).map(|(i, _)| i).unwrap_or(s.len());
                     let en = s
                         .char_indices()
@@ -1058,6 +1166,11 @@ impl<'a> Vm<'a> {
                         .nth(len)
                         .map(|(i, _)| i)
                         .unwrap_or(s.len());
+                    (st, en, s.len() as u64)
+                };
+                self.charge_work(work);
+                let out = {
+                    let s = self.heap_str(src_idx, span)?;
                     s[st..en].to_string()
                 };
                 self.intern_runtime_str(out)

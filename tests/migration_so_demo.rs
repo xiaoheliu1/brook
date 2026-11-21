@@ -457,14 +457,13 @@ fn cross_script_call_via_host_function() {
 
     let engine = Rc::new(RefCell::new(Engine::new()));
 
-    // 脚本 B：独立编译单元，提供一个 compute 函数
-    let script_b = engine
-        .borrow()
-        .load_str("func compute(n) { n * 7 }")
-        .unwrap();
-    // 宿主的脚本缓存（对应 so_demo 的 AST_CACHE）
+    // 宿主的脚本缓存（对应 so_demo 的 AST_CACHE）——先建空缓存，
+    // 脚本在 call_script 注册【之后】再编译入缓存：D-046 3.8 起脚本
+    // 绑定编译时的宿主指纹，注册表后来发生变化（新增 call_script）
+    // 的旧脚本会被 Engine::call 拒绝——真实部署「先注册齐宿主函数、
+    // 再编译脚本」的顺序在这里被测试结构如实反映。
     let cache: Rc<RefCell<HashMap<String, brook::Script>>> =
-        Rc::new(RefCell::new(HashMap::from([("b.bk".to_string(), script_b)])));
+        Rc::new(RefCell::new(HashMap::new()));
     // 递归检测的名字栈（对应 so_demo 的 SCRIPT_STACK）
     let stack: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -500,6 +499,13 @@ fn cross_script_call_via_host_function() {
         }
     )
     .unwrap();
+
+    // 脚本 B：独立编译单元，提供一个 compute 函数（注册齐宿主函数后编译）
+    let script_b = engine
+        .borrow()
+        .load_str("func compute(n) { n * 7 }")
+        .unwrap();
+    cache.borrow_mut().insert("b.bk".to_string(), script_b);
 
     // 脚本 A 调用 B 的 compute —— 对脚本作者来说就是调一个宿主函数
     let script_a = engine

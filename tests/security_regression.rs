@@ -13,7 +13,7 @@ use brook::engine::HostRegistry;
 use brook::ir::{Function, Instr, Op, Program};
 use brook::ty::Ty;
 use brook::value::Value;
-use brook::{Engine, Script};
+use brook::{register_fn, Engine, Script};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -46,6 +46,7 @@ fn hostile_sbc_rejects_params_over_register_window() {
         source_hash: 0,
         source: Rc::from(""),
         deps: Vec::new(),
+        host_fp: Vec::new(),
     };
     let fp: cache::HostFingerprint = Vec::new();
     let bytes = cache::encode(&script, &fp);
@@ -149,6 +150,7 @@ fn deep_nested_type_in_cache_is_rejected() {
         source_hash: 0,
         source: Rc::from(""),
         deps: Vec::new(),
+        host_fp: Vec::new(),
     };
     let fp: cache::HostFingerprint = Vec::new();
     let bytes = cache::encode(&script, &fp);
@@ -217,4 +219,325 @@ fn substr_huge_start_is_empty_not_panic() {
         engine.call(&script, "main", vec![]).unwrap(),
         Value::from("ab")
     );
+}
+
+// ===========================================================================
+// 第二批（D-046）：gas 计费、配额盲区、decode 语义校验、指纹绑定、
+// deps 收敛、循环变量、缓存源码段
+// ===========================================================================
+
+fn encode_program(
+    name: &str,
+    params: Vec<Ty>,
+    ret: Ty,
+    code: Vec<Instr>,
+    nregs: u16,
+    sig_ret: Ty,
+) -> Vec<u8> {
+    let prog = Program {
+        funcs: vec![Function {
+            name: name.into(),
+            code,
+            nregs,
+            params: params.clone(),
+            ret: ret.clone(),
+        }],
+        ids: HashMap::from([(name.to_string(), 0u16)]),
+        strings: vec![],
+    };
+    let script = Script {
+        sigs: HashMap::from([(
+            name.to_string(),
+            brook::typecheck::FuncSig { params: params.clone(), ret: sig_ret },
+        )]),
+        code: prog,
+        name: name.into(),
+        source_hash: 0,
+        source: Rc::from(""),
+        deps: Vec::new(),
+        host_fp: Vec::new(),
+    };
+    let fp: cache::HostFingerprint = Vec::new();
+    cache::encode(&script, &fp)
+}
+
+/// 5.7-1：解码签名含推断变量 → 拒绝。`type_matches` 的
+/// `(_, Ty::Var(_)) => true` 会放行任意值，函数体按 I64 位解释堆索引。
+#[test]
+fn hostile_sbc_rejects_inference_variable_in_signature() {
+    let bytes = encode_program(
+        "f",
+        vec![],
+        Ty::Var(0),
+        vec![
+            Instr::new(Op::ConstUnit { dst: 0 }, brook::Span::synthetic()),
+            Instr::new(Op::Ret { src: 0 }, brook::Span::synthetic()),
+        ],
+        1,
+        Ty::Var(0),
+    );
+    let err = Engine::new().script_from_bytes(&bytes).unwrap_err();
+    assert!(
+        err.message.contains("inference variable"),
+        "{}",
+        err.message
+    );
+}
+
+/// 5.7-2：sigs 与 funcs 的签名不一致 → 拒绝（coerce 与位解释各用一份）。
+#[test]
+fn hostile_sbc_rejects_signature_mismatch() {
+    let bytes = encode_program(
+        "f",
+        vec![Ty::I64],
+        Ty::I64,
+        vec![
+            Instr::new(Op::ConstI64 { dst: 0, val: 1 }, brook::Span::synthetic()),
+            Instr::new(Op::Ret { src: 0 }, brook::Span::synthetic()),
+        ],
+        1,
+        Ty::Str, // sigs 说返回 str，funcs 说 i64
+    );
+    let err = Engine::new().script_from_bytes(&bytes).unwrap_err();
+    assert!(err.message.contains("signature mismatch"), "{}", err.message);
+}
+
+/// 5.7-3：ids 非双射 → 拒绝（入口名映射到任意函数会静默调错代码）。
+#[test]
+fn hostile_sbc_rejects_id_table_mismatch() {
+    let prog = Program {
+        funcs: vec![
+            Function {
+                name: "f".into(),
+                code: vec![Instr::new(Op::Ret { src: 0 }, brook::Span::synthetic())],
+                nregs: 1,
+                params: vec![],
+                ret: Ty::Unit,
+            },
+            Function {
+                name: "g".into(),
+                code: vec![Instr::new(Op::Ret { src: 0 }, brook::Span::synthetic())],
+                nregs: 1,
+                params: vec![],
+                ret: Ty::Unit,
+            },
+        ],
+        ids: HashMap::from([("f".to_string(), 0u16)]),
+        strings: vec![],
+    };
+    let script = Script {
+        sigs: HashMap::new(),
+        code: prog,
+        name: "ids".into(),
+        source_hash: 0,
+        source: Rc::from(""),
+        deps: Vec::new(),
+        host_fp: Vec::new(),
+    };
+    let fp: cache::HostFingerprint = Vec::new();
+    let bytes = cache::encode(&script, &fp);
+    let err = Engine::new().script_from_bytes(&bytes).unwrap_err();
+    assert!(err.message.contains("id table"), "{}", err.message);
+}
+
+/// 5.3：堆元组与签名元数不一致 → 运行时明确报错（旧实现 zip 截断静默丢
+/// 元素，且与参考解释器分歧）。
+#[test]
+fn hostile_sbc_reports_tuple_arity_mismatch() {
+    let bytes = encode_program(
+        "f",
+        vec![],
+        Ty::Tuple(vec![Ty::I64]),
+        vec![
+            Instr::new(Op::ConstI64 { dst: 0, val: 1 }, brook::Span::synthetic()),
+            Instr::new(Op::ConstI64 { dst: 1, val: 2 }, brook::Span::synthetic()),
+            Instr::new(Op::ConstI64 { dst: 2, val: 3 }, brook::Span::synthetic()),
+            Instr::new(
+                Op::MakeTuple { dst: 3, elems: brook::ir::Regs::new(&[0, 1, 2]) },
+                brook::Span::synthetic(),
+            ),
+            Instr::new(Op::Ret { src: 3 }, brook::Span::synthetic()),
+        ],
+        4,
+        Ty::Tuple(vec![Ty::I64]),
+    );
+    let engine = Engine::new();
+    let script = engine.script_from_bytes(&bytes).unwrap();
+    let err = engine.call(&script, "f", vec![]).unwrap_err();
+    assert!(
+        err.message.contains("tuple arity mismatch") && err.message.contains("value has 3"),
+        "{}",
+        err.message
+    );
+}
+
+/// 3.8：内存里的 Script 绑定编译时宿主指纹——拿到别的 Engine 上调用
+/// 明确报错，而不是按槽位 id 静默调错宿主函数。
+#[test]
+fn script_rejects_foreign_engine_registry() {
+    let mut e1 = Engine::new();
+    register_fn!(e1, "read_file", (i64) -> i64, |n| n).unwrap();
+    let script = e1.load_str("func f() { read_file(1) }").unwrap();
+    assert_eq!(e1.call(&script, "f", vec![]).unwrap(), Value::I64(1));
+
+    let mut e2 = Engine::new();
+    register_fn!(e2, "delete_all", (i64) -> i64, |n| n * 100).unwrap();
+    let err = e2.call(&script, "f", vec![]).unwrap_err();
+    assert!(
+        err.message.contains("different host registry"),
+        "{}",
+        err.message
+    );
+}
+
+/// 3.4：gas 与 O(n) 内建挂钩——`len(64KB 串)` 百万轮在默认 10M 步预算内
+/// 必须被拦（修复前每轮 1 步，实际扫描 6.4e10 字符，宿主挂死数小时）。
+#[test]
+fn gas_charges_string_work() {
+    let mut src = String::from("func main() {\n    let s = \"");
+    src.push_str(&"x".repeat(64 * 1024));
+    src.push_str("\"\n    let t = 0\n    for i in 0..1000000 { t = t + len(s) }\n    t\n}");
+    let engine = Engine::new();
+    let script = engine.load_str(&src).unwrap();
+    let err = engine.call(&script, "main", vec![]).unwrap_err();
+    assert!(
+        err.message.contains("gas") || err.message.contains("step"),
+        "{}",
+        err.message
+    );
+}
+
+/// 3.5b：常量池计入内存配额——修复前 2 MiB 字面量的配额消耗为 0。
+#[test]
+fn constant_pool_counts_against_heap_quota() {
+    let mut src = String::from("func main() { return \"");
+    src.push_str(&"x".repeat(2 * 1024 * 1024));
+    src.push_str("\"\n}");
+    let engine = Engine::new().with_heap_limit(1024 * 1024);
+    let script = engine.load_str(&src).unwrap();
+    let err = engine.call(&script, "main", vec![]).unwrap_err();
+    assert!(
+        err.message.contains("memory limit exceeded"),
+        "{}",
+        err.message
+    );
+}
+
+/// 5.9：循环变量不可赋值（旧实现放行 → 每轮重置 → 死循环靠 gas 兜底）；
+/// 内层 `let` 遮蔽后的同名变量是合法赋值目标。
+#[test]
+fn loop_variable_assignment_is_rejected() {
+    let engine = Engine::new();
+    let err = engine
+        .load_str("func main() { for i in 0..10 { i = 5 } }")
+        .unwrap_err();
+    assert!(
+        err.message.contains("cannot assign to loop variable"),
+        "{}",
+        err.message
+    );
+    // 数组 for-in 的循环变量同样受保护
+    let err = engine
+        .load_str("func main() { let xs = [1]  for x in xs { x = 2 } }")
+        .unwrap_err();
+    assert!(
+        err.message.contains("cannot assign to loop variable"),
+        "{}",
+        err.message
+    );
+    // 遮蔽：循环体内 let 出新绑定 → 赋值合法
+    let ok = engine
+        .load_str("func main() { let t = 0  for i in 0..3 { let i = 5  t = t + i }  t }")
+        .unwrap();
+    assert_eq!(engine.call(&ok, "main", vec![]).unwrap(), Value::I64(15));
+}
+
+/// 3.7：deps_fresh 的包含性收敛——缓存里的依赖路径指向 import_dir 之外
+/// 时，缓存必须判失效（重建走 resolve 护栏），宿主目录树外的诱饵文件
+/// 不再能借缓存校验路径被读取。
+#[test]
+fn cache_deps_outside_import_dir_invalidate() {
+    use std::path::PathBuf;
+    let dir = std::env::temp_dir().join(format!("brook_deps_scope_{}", std::process::id()));
+    let lib_dir = dir.join("libs");
+    let outside_dir = dir.join("outside");
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    std::fs::create_dir_all(&outside_dir).unwrap();
+    std::fs::write(lib_dir.join("common.bk"), "func double(n) { n * 2 }").unwrap();
+    std::fs::write(outside_dir.join("common.bk"), "func double(n) { n * 3 }").unwrap();
+    let src = "import \"common\"\n\nfunc main() { double(21) }";
+    let cache_path = dir.join("task.sbc");
+
+    let engine = Engine::new().set_import_dir(&lib_dir);
+    // 正常编译 + 缓存（deps 指向 libs/common.bk，hash = n*2 版本）
+    let s = engine.compile_cached(src, "task", &cache_path).unwrap();
+    assert_eq!(engine.call(&s, "main", vec![]).unwrap(), Value::I64(42));
+
+    // 手工构造一个"指向树外诱饵"的缓存：主源码 hash 正确、deps 的路径
+    // 与 hash 都是诱饵文件的——修复前 deps_fresh 按路径读诱饵、hash 命中
+    // → 缓存命中 → 调用 n*3；修复后包含性检查失败 → 判失效 → 重建走
+    // resolve（找到 libs/ 里的真 lib）→ n*2。
+    let decoy_hash = brook::cache::hash_source(
+        &std::fs::read_to_string(outside_dir.join("common.bk")).unwrap(),
+    );
+    let prog = Program {
+        funcs: vec![Function {
+            name: "main".into(),
+            code: vec![
+                Instr::new(Op::ConstUnit { dst: 0 }, brook::Span::synthetic()),
+                Instr::new(Op::Ret { src: 0 }, brook::Span::synthetic()),
+            ],
+            nregs: 1,
+            params: vec![],
+            ret: Ty::Unit,
+        }],
+        ids: HashMap::from([("main".to_string(), 0u16)]),
+        strings: vec![],
+    };
+    let hostile = Script {
+        sigs: HashMap::new(),
+        code: prog,
+        name: "task".into(),
+        source_hash: brook::cache::hash_source(src),
+        source: Rc::from(src),
+        deps: vec![(
+            outside_dir.join("common.bk").display().to_string(),
+            decoy_hash,
+            true,
+        )],
+        host_fp: engine.fingerprint(),
+    };
+    std::fs::write(&cache_path, brook::cache::encode(&hostile, &engine.fingerprint())).unwrap();
+
+    let s2 = engine.compile_cached(src, "task", &cache_path).unwrap();
+    assert_eq!(
+        engine.call(&s2, "main", vec![]).unwrap(),
+        Value::I64(42),
+        "缓存必须失效重建（树外依赖不可作为时效依据）"
+    );
+    let _ = PathBuf::from(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 5.2：带 import 的脚本缓存命中后，`Script::source` 必须是拼接视图
+/// （v6 源码段）——report 的源码行 / caret 才对得上行号。
+#[test]
+fn cached_import_script_keeps_combined_source() {
+    let dir = std::env::temp_dir().join(format!("brook_cached_src_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("common.bk"), "func double(n) { n * 2 }").unwrap();
+    let src = "import \"common\"\n\nfunc main() { double(21) }";
+    let cache_path = dir.join("task.sbc");
+
+    let engine = Engine::new().set_import_dir(&dir);
+    let s1 = engine.compile_cached(src, "task", &cache_path).unwrap();
+    // 第二次 compile_cached 命中缓存（源码 hash + deps 全部新鲜）
+    let s2 = engine.compile_cached(src, "task", &cache_path).unwrap();
+    assert!(
+        s2.source.contains("import \"common\"") && s2.source.contains("double"),
+        "cached script must carry the combined view source, got: {:?}",
+        &*s2.source
+    );
+    assert_eq!(s1.source, s2.source);
+    let _ = std::fs::remove_dir_all(&dir);
 }

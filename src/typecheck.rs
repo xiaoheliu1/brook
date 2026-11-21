@@ -35,6 +35,12 @@ pub struct Checker {
     /// Number of enclosing `while`/`for` bodies. `break` and `continue` are
     /// compile errors at depth 0 instead of silently looping or exiting.
     loop_depth: usize,
+    /// 活跃的 for 循环变量：(名字, 绑定它的 scope 下标)。`for i in 0..n
+    /// { i = 5 }` 会被放行到 codegen 直接写循环寄存器——自增照常进行，
+    /// 每轮又被重置为同一个值 → 死循环（只靠 gas 兜底，D-046 5.9）。
+    /// 记录 scope 下标是为了区分遮蔽：循环体内 `let i = ...` 造出新绑定，
+    /// 对它赋值合法。
+    active_for_vars: Vec<(String, usize)>,
 }
 
 impl Checker {
@@ -47,6 +53,7 @@ impl Checker {
             scopes: Vec::new(),
             current_ret: Ty::Unit,
             loop_depth: 0,
+            active_for_vars: Vec::new(),
         }
     }
 
@@ -207,6 +214,13 @@ impl Checker {
         None
     }
 
+    /// `name` 的绑定所在的 scope 下标（自内向外找）。
+    fn find_scope(&self, name: &str) -> Option<usize> {
+        self.scopes
+            .iter()
+            .rposition(|scope| scope.contains_key(name))
+    }
+
     // ---- statements ----
 
     /// Returns `None` if the block diverges (ends in `return`).
@@ -244,6 +258,20 @@ impl Checker {
                 let old = self.lookup(name).ok_or_else(|| {
                     Error::type_error(format!("undefined variable `{}`", name), *span)
                 })?;
+                // 循环变量不可赋值（D-046 5.9）。内层 `let` 遮蔽后的同名
+                // 变量绑定在别的 scope，find_scope 找到的是新绑定 → 放行。
+                if let Some(idx) = self.find_scope(name) {
+                    if self
+                        .active_for_vars
+                        .iter()
+                        .any(|(v, s)| *s == idx && v == name)
+                    {
+                        return Err(Error::type_error(
+                            format!("cannot assign to loop variable `{}`", name),
+                            *span,
+                        ));
+                    }
+                }
                 self.unify(&old, &vt, *span)
                     .map_err(|e| Error::type_error(format!("assignment to `{}`: {}", name, e), *span))?;
                 Ok(Some(Ty::Unit))
@@ -324,9 +352,11 @@ impl Checker {
                 };
                 self.push_scope();
                 self.bind(var, var_ty);
+                self.active_for_vars.push((var.clone(), self.scopes.len() - 1));
                 self.loop_depth += 1;
                 let body_res = self.infer_block(body);
                 self.loop_depth -= 1;
+                self.active_for_vars.pop();
                 self.pop_scope();
                 body_res?;
                 Ok(Some(Ty::Unit))

@@ -176,6 +176,7 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
         // Hand-built scripts carry no source; `.sbc` round-trips drop it too.
         source: Rc::from(""),
         deps: Vec::new(),
+        host_fp: Vec::new(),
     };
     let bytes = cache::encode(&script, &fp);
     let back = cache::decode(&bytes, &fp)?;

@@ -252,6 +252,7 @@ fn cache_decode_rejects_hostile_dependency_lists() {
         source_hash: 1,
         source: Rc::from(""),
         deps: Vec::new(),
+        host_fp: Vec::new(),
     };
 
     // 敌意依赖清单（`..` 组件）→ decode 拒绝
@@ -265,20 +266,45 @@ fn cache_decode_rejects_hostile_dependency_lists() {
             ("../../secrets.bk".into(), 1, true),
             ("..\\..\\secrets.bk".into(), 1, true),
         ],
+        host_fp: Vec::new(),
     };
     let bytes = cache::encode(&hostile, &fp);
     let err = cache::decode(&bytes, &fp).unwrap_err();
     assert!(err.message.contains(".."), "{}", err.message);
 
-    // 坏来源标记（手工翻转依赖记录末尾的 flag 字节）→ decode 拒绝。
-    // 翻转的是依赖「计数」高位字节（计数先于 flag 校验触发），同样证明
-    // 末尾字节的翻转不会被静默吞掉。
+    // 坏来源标记（手工翻转依赖记录的 flag 字节）→ decode 拒绝。
+    // base 的 deps 为空，需要一个带【合法】依赖的脚本才能定位 flag 字节：
+    // 依赖记录 = 路径 str(4+len) + hash(8) + flag(1)，flag 是 deps 段
+    // 最后一字节。翻转后 flag = 0xFE > 1 被硬校验拒绝——证明依赖段的
+    // 字节翻转不会被静默吞掉（D-046 3.7 加固后依赖段不再是文件末尾，
+    // 末尾是 v6 的源码段）。
+    let benign = brook::Script {
+        code: base.code.clone(),
+        sigs: base.sigs.clone(),
+        name: base.name.clone(),
+        source_hash: base.source_hash,
+        source: base.source.clone(),
+        deps: vec![("lib/common.bk".into(), 1, true)],
+        host_fp: Vec::new(),
+    };
+    let mut bytes = cache::encode(&benign, &fp);
+    // 源码段（4 字节长度头 + len 字节）在 deps 之后；flag 是 deps 段末字节
+    let last = bytes.len() - (4 + benign.source.len()) - 1;
+    bytes[last] = 0xFE;
+    let err = cache::decode(&bytes, &fp).unwrap_err();
+    assert!(
+        err.message.contains("dependency") && err.message.contains("flag"),
+        "{}",
+        err.message
+    );
+
+    // 末尾（源码段）字节翻转同样不被静默吞掉
     let mut bytes = cache::encode(&base, &fp);
     let n = bytes.len();
     bytes[n - 1] = 0xFE;
     let err = cache::decode(&bytes, &fp).unwrap_err();
     assert!(
-        err.message.contains("dependency count"),
+        err.message.contains("truncated") || err.message.contains("UTF-8"),
         "{}",
         err.message
     );
