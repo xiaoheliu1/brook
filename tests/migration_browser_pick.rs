@@ -1,4 +1,4 @@
-//! 可行性验证：把 rhai_demo/scripts/browser_pick.rhai 改写成 miniscript 脚本。
+//! 可行性验证：把 rhai_demo/scripts/browser_pick.rhai 改写成 vitul 脚本。
 //!
 //! 目的不是复刻浏览器，而是证明 A 方案（宿主能力不变、注册层可改）能覆盖
 //! 最难的迁移场景。这里 mock 掉浏览器，用 fixture 数据让原脚本的 12 组断言
@@ -15,7 +15,7 @@
 //!   1. 宿主返回值只支持到 2 元组，3 元组需要改用 Opaque 句柄承载。
 //!   2. 脚本函数参数类型必须固定，rhai 的泛型 check 需统一成 str 比较。
 
-use miniscript::{register_fn, Engine, Opaque, Result, Value};
+use vitul::{register_fn, Engine, Opaque, Result, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -271,7 +271,7 @@ func main() {
 "###;
 
 #[test]
-fn browser_pick_rewritten_to_miniscript() -> Result<()> {
+fn browser_pick_rewritten_to_vitul() -> Result<()> {
     let engine = build_engine()?;
     let script = engine.load_str(SCRIPT)?;
     let failed = engine.call(&script, "main", vec![])?;

@@ -238,14 +238,14 @@ impl_tuple_n!(8; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E, 5 => F, 6 => G, 7 => H)
 /// Register a host function with a Rust-typed signature.
 ///
 /// ```
-/// use miniscript::{register_fn, Engine, Opaque, Value};
+/// use vitul::{register_fn, Engine, Opaque, Value};
 /// # struct Order { total: f64 }
-/// # fn main() -> miniscript::Result<()> {
+/// # fn main() -> vitul::Result<()> {
 /// let mut engine = Engine::new();
 /// register_fn!(engine, "total", (Opaque<Order>) -> f64, |o| o.total)?;
 /// register_fn!(engine, "add", (i64, i64), |a, b| a + b)?;       // inferred result
-/// register_fn!(engine, "checked", (f64) -> miniscript::Result<f64>, |x| {
-///     if x < 0.0 { Err(miniscript::Error::runtime("negative")) } else { Ok(x) }
+/// register_fn!(engine, "checked", (f64) -> vitul::Result<f64>, |x| {
+///     if x < 0.0 { Err(vitul::Error::runtime("negative")) } else { Ok(x) }
 /// })?;
 /// let script = engine.load_str("func go(o) { add(to_i64(total(o)), 1) }")?;
 /// let order = Value::from(Opaque::new(Order { total: 12.0 }));

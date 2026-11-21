@@ -8,8 +8,8 @@
 //! Every case here is sized well past the limit on purpose: before the guard a
 //! single one of them took the whole test binary down.
 
-use miniscript::parser::MAX_NESTING;
-use miniscript::Engine;
+use vitul::parser::MAX_NESTING;
+use vitul::Engine;
 
 fn err_of(src: &str) -> String {
     match Engine::new().load_str(src) {
@@ -102,8 +102,8 @@ fn everyday_nesting_still_compiles() {
     );
     let script = engine.load_str(&src).expect("60 levels must be accepted");
     assert_eq!(
-        engine.call(&script, "f", vec![miniscript::Value::I64(7)]).unwrap(),
-        miniscript::Value::I64(7)
+        engine.call(&script, "f", vec![vitul::Value::I64(7)]).unwrap(),
+        vitul::Value::I64(7)
     );
 
     // 60-term sum, evaluated to make sure the folding is still correct.
@@ -111,7 +111,7 @@ fn everyday_nesting_still_compiles() {
     let script = engine.load_str(&src).expect("60-term chain must be accepted");
     assert_eq!(
         engine.call(&script, "f", vec![]).unwrap(),
-        miniscript::Value::I64(61)
+        vitul::Value::I64(61)
     );
 
     // 20 nested ifs: readable code, nowhere near the limit.
@@ -134,8 +134,8 @@ fn everyday_nesting_still_compiles() {
         .load_str(&src)
         .expect("20-level if-expression ladder must be accepted");
     assert_eq!(
-        engine.call(&script, "f", vec![miniscript::Value::Bool(false)]).unwrap(),
-        miniscript::Value::I64(2)
+        engine.call(&script, "f", vec![vitul::Value::Bool(false)]).unwrap(),
+        vitul::Value::I64(2)
     );
 }
 
@@ -147,7 +147,7 @@ fn limit_is_reported_with_a_source_location() {
     assert_eq!(span.line, 1);
     assert!(span.col > 1, "column should point into the expression, got {}", span.col);
     // `report` must render it without needing anything else from the caller.
-    let rendered = err.report(&src, "deep.ms");
-    assert!(rendered.contains("deep.ms:1:"), "{}", rendered);
+    let rendered = err.report(&src, "deep.vt");
+    assert!(rendered.contains("deep.vt:1:"), "{}", rendered);
     assert!(rendered.contains("nesting too deep"), "{}", rendered);
 }

@@ -1,6 +1,6 @@
 //! Android smoke-test binary.
 //!
-//! Cross-compile for an Android ABI, `adb push` it (plus an optional .ms
+//! Cross-compile for an Android ABI, `adb push` it (plus an optional .vt
 //! script), and run it from `adb shell`. It exercises the whole pipeline on the
 //! target device through both FFI layers:
 //!
@@ -9,14 +9,14 @@
 //!    multi-argument calls, string results, a located error with a multi-line
 //!    report, hot reload, and `ms_script_free`.
 //!
-//! Usage: `android_cli [path/to/script.ms]` (defaults to the built-in rule).
+//! Usage: `android_cli [path/to/script.vt]` (defaults to the built-in rule).
 
-use miniscript::ffi::{
+use vitul::ffi::{
     ms_last_error, ms_last_report, ms_script_call, ms_script_create_cached, ms_script_free,
     ms_script_reload, MsVal, MsValOut, MS_ERR_BUFFER, MS_ERR_NULL, MS_ERR_RUNTIME, MS_OK,
     MS_VAL_F64, MS_VAL_I64, MS_VAL_STR,
 };
-use miniscript::{register_fn, Engine, Opaque, Value};
+use vitul::{register_fn, Engine, Opaque, Value};
 use std::ffi::{c_char, CString};
 
 #[derive(Debug)]
@@ -77,7 +77,7 @@ fn last_report() -> String {
     String::from_utf8_lossy(&buf[..n]).to_string()
 }
 
-fn main() -> miniscript::Result<()> {
+fn main() -> vitul::Result<()> {
     // ---- 1. Rust API end-to-end (typed host callback + opaque handle) ----
     let mut engine = Engine::new();
     register_fn!(engine, "order_total", (Opaque<Order>) -> f64, |o| o.total)?;
@@ -85,14 +85,14 @@ fn main() -> miniscript::Result<()> {
 
     let source = match std::env::args().nth(1) {
         Some(path) => std::fs::read_to_string(&path)
-            .map_err(|e| miniscript::Error::io(format!("{}: {}", path, e)))?,
+            .map_err(|e| vitul::Error::io(format!("{}: {}", path, e)))?,
         None => DEFAULT_SCRIPT.to_string(),
     };
     let script = engine.load_str(&source)?;
     let order = Value::from(Opaque::new(Order { total: 200.0, vip: true }));
     let result = engine.call(&script, "check", vec![order, Value::F64(1000.0)])?;
     println!(
-        "miniscript {} / {}: check(Order{{200,vip}}, 1000) = {}",
+        "vitul {} / {}: check(Order{{200,vip}}, 1000) = {}",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::ARCH,
         result
@@ -104,13 +104,13 @@ fn main() -> miniscript::Result<()> {
     Ok(())
 }
 
-unsafe fn handle_api_demo() -> miniscript::Result<()> {
+unsafe fn handle_api_demo() -> vitul::Result<()> {
     let cache = std::env::temp_dir().join("ms_cli_cache.sbc");
     let src = cstr(HANDLE_SCRIPT);
     let name = cstr("handle_demo");
     let cache_c = cstr(&cache.to_string_lossy());
 
-    let mut ptr: *mut miniscript::ffi::MsScript = std::ptr::null_mut();
+    let mut ptr: *mut vitul::ffi::MsScript = std::ptr::null_mut();
     let code = ms_script_create_cached(src.as_ptr(), name.as_ptr(), cache_c.as_ptr(), &mut ptr);
     assert_eq!(code, MS_OK, "create_cached failed: {}", last_error());
 

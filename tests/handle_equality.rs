@@ -7,7 +7,7 @@
 //! (`Rc` pointer identity plus the registered type name) is the authority;
 //! the VM now defers to it.
 
-use miniscript::{Engine, Handle, Value};
+use vitul::{Engine, Handle, Value};
 
 /// Handles are opaque: the script can never read the payload, so the field
 /// is write-only by design.

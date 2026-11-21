@@ -6,9 +6,9 @@
 //! *different* `nregs` at each depth so a stale `nregs` corrupts the next
 //! call's window start and fails loudly.
 
-use miniscript::engine::Engine;
-use miniscript::error::Result;
-use miniscript::value::Value;
+use vitul::engine::Engine;
+use vitul::error::Result;
+use vitul::value::Value;
 
 fn run(src: &str, func: &str, args: Vec<Value>) -> Result<Value> {
     let engine = Engine::new();

@@ -2,11 +2,11 @@
 //! invocation. Handcrafted `Program`s exercise the branches codegen never
 //! emits (a corrupt `.sbc` can still contain them).
 
-use miniscript::ir::{builtin, Function, Instr, Op, Program, Regs};
-use miniscript::span::Span;
-use miniscript::ty::Ty;
-use miniscript::validate::validate;
-use miniscript::Engine;
+use vitul::ir::{builtin, Function, Instr, Op, Program, Regs};
+use vitul::span::Span;
+use vitul::ty::Ty;
+use vitul::validate::validate;
+use vitul::Engine;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -29,7 +29,7 @@ fn rejected(op: Op, nregs: u16, nhosts: usize) -> bool {
 }
 
 #[test]
-fn registers_and_targets_are_checked() -> miniscript::Result<()> {
+fn registers_and_targets_are_checked() -> vitul::Result<()> {
     assert!(rejected(Op::Mov { dst: 2, src: 0 }, 2, 0));
     assert!(rejected(Op::Mov { dst: 0, src: 2 }, 2, 0));
     assert!(validate(&program(Op::Mov { dst: 1, src: 0 }, 2), 0).is_ok());
@@ -43,7 +43,7 @@ fn registers_and_targets_are_checked() -> miniscript::Result<()> {
 }
 
 #[test]
-fn ids_and_pools_are_checked() -> miniscript::Result<()> {
+fn ids_and_pools_are_checked() -> vitul::Result<()> {
     let no_args = Regs::new(&[]);
     assert!(rejected(Op::CallScript { func: 1, args: no_args, dst: 0 }, 1, 0));
     assert!(rejected(Op::CallHost { func: 1, args: no_args, dst: 0 }, 1, 1));
@@ -69,19 +69,19 @@ fn ids_and_pools_are_checked() -> miniscript::Result<()> {
 }
 
 #[test]
-fn compiler_output_always_passes() -> miniscript::Result<()> {
+fn compiler_output_always_passes() -> vitul::Result<()> {
     let engine = Engine::new();
     let script = engine.load_str("func f(s) { let t = len(s)\n t + 1 }")?;
     // `compile` itself runs the validator; a successful load is the assertion.
     assert_eq!(
-        engine.call(&script, "f", vec![miniscript::Value::Str("abc".into())])?,
-        miniscript::Value::I64(4)
+        engine.call(&script, "f", vec![vitul::Value::Str("abc".into())])?,
+        vitul::Value::I64(4)
     );
     Ok(())
 }
 
 #[test]
-fn call_script_args_stay_inside_the_callee_window() -> miniscript::Result<()> {
+fn call_script_args_stay_inside_the_callee_window() -> vitul::Result<()> {
     // Structural bound only: argv is copied into the callee's window
     // `[nbase, nbase + nregs)`, so more args than the window panicked on the
     // copy (caught only by `catch_unwind`). Semantic arity (args ==

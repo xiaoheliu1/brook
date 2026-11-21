@@ -146,7 +146,7 @@
 
 `bin/uinput_probe.rs`：独立可执行（feature 门控，默认不构建），root 探针——`ioctl /dev/uinput` 造虚拟触摸屏验证替代无障碍输入的路线，与本 .so 无关。
 
-## 5. 替换为 miniscript 的约束清单
+## 5. 替换为 vitul 的约束清单
 
 ### 5.1 构建/编译约束
 
@@ -160,17 +160,17 @@
 |---|---|---|
 | `OK\t`/`ERR\t` 返回前缀 | lib.rs:1821,1857,1880-1884；ScriptHost.kt:40-46 | 末值丢弃，成败只看前缀 |
 | try/catch 接得住宿主错误 | mod.rs:197-235 | 工具错误必须是 `ErrorRuntime` |
-| `Result<T,ScriptError>` = 脚本异常 | fs/vision/util | miniscript 无异常 → 改错误值/元组语义 |
+| `Result<T,ScriptError>` = 脚本异常 | fs/vision/util | vitul 无异常 → 改错误值/元组语义 |
 | 取消检查点 | lib.rs:794-802（set_max_operations 1 亿次 + on_progress 每 65536 次回调 Kotlin `cancelled`） | **死循环必须可中断**；rhai 靠进度回调协作取消 |
 | panic 安全网 | lib.rs:39-50,137-141 | panic 穿 JNI 会 abort 进程 |
-| 引擎/AST 进程级缓存 | lib.rs:1654-1693 | **跨线程复用**（sync）——miniscript `!Send`，需每线程 Engine 或线程本地缓存 |
+| 引擎/AST 进程级缓存 | lib.rs:1654-1693 | **跨线程复用**（sync）——vitul `!Send`，需每线程 Engine 或线程本地缓存 |
 | 每轮复位语义 | lib.rs:1801-1815 | 顶层轮清失败账本、复位 fs 闸门 |
 | Scope 常量注入 | lib.rs:1826-1841 | 9 颜色 + ARGS（ARGS 0 使用可砍；颜色可改 9 个零参函数） |
-| 方法调用式注册 | util.rs:478-482, task.rs | `arr.join("-")`、`6.clamp(1,5)`、`t.summary()`——miniscript 只能普通函数 |
+| 方法调用式注册 | util.rs:478-482, task.rs | `arr.join("-")`、`6.clamp(1,5)`、`t.summary()`——vitul 只能普通函数 |
 | 线程本地状态 | lib.rs:684-703、fs.rs:31-37、util.rs:69-77、vision.rs:88-106 | SCRIPT_STACK/RESTRICTED/RNG/模板缓存/容差/区域/间隔 |
 | 受限写围栏 | fs.rs:40-164；JNI setRestricted | 按调用线程生效 |
 
-### 5.3 数据类型层面的硬冲突（miniscript 无 Map/Array）
+### 5.3 数据类型层面的硬冲突（vitul 无 Map/Array）
 
 232 个重载中：**返回 Map 19 个**（device_info、current_app、ui_find_report、app_info、gps_once、trigger_json、date_parts×2、img_load/img_info、img_find、img_find_at、img_wait、img_wait_at、img_screen_size、img_color_at、img_shot、img_crop、img_stable×2）；**返回 Array ~55 个**（screen_size、wait_ui×2、wait_id×6、wait_desc×6、scroll_until×3、ui_dump、ocr_screen/region/find_text、find_text/id/desc/by、app_list、regex_capture/split、fs_list、fs_read_bytes、img_find_all/many/bind×2、img_color）；**参数收 Array 8 个**（draw_path×2、draw_polygon×2、fs_write_bytes、img_find_many、img_find_bind×2、join、rnd_pick）；嵌套结构：ui_find_report（Map 内 Array<Map>）、fs_list/ui_dump/ocr_*/app_list（Array<Map>）。
 

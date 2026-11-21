@@ -8,14 +8,14 @@
 
 use std::collections::HashMap;
 
-use miniscript::ast;
-use miniscript::engine::HostRegistry;
-use miniscript::eval::Interpreter;
-use miniscript::lexer::Lexer;
-use miniscript::parser::Parser;
-use miniscript::typecheck::Checker;
-use miniscript::value::Value;
-use miniscript::{Engine, ErrorKind, Handle};
+use vitul::ast;
+use vitul::engine::HostRegistry;
+use vitul::eval::Interpreter;
+use vitul::lexer::Lexer;
+use vitul::parser::Parser;
+use vitul::typecheck::Checker;
+use vitul::value::Value;
+use vitul::{Engine, ErrorKind, Handle};
 
 /// Run `src`'s `name` through the reference interpreter.
 fn eval_call(
@@ -23,7 +23,7 @@ fn eval_call(
     name: &str,
     args: Vec<Value>,
     host: &HostRegistry,
-) -> miniscript::Result<Value> {
+) -> vitul::Result<Value> {
     let tokens = Lexer::new(src).tokenize()?;
     let program = Parser::new(tokens).parse()?;
     let sigs = Checker::new(&host.signatures()).check(&program)?;
@@ -34,13 +34,13 @@ fn eval_call(
 }
 
 /// Run the same script through the production VM.
-fn vm_call(src: &str, name: &str, args: Vec<Value>) -> miniscript::Result<Value> {
+fn vm_call(src: &str, name: &str, args: Vec<Value>) -> vitul::Result<Value> {
     let engine = Engine::new();
     let script = engine.load_str(src)?;
     engine.call(&script, name, args)
 }
 
-fn both_agree(src: &str, expected: Value) -> miniscript::Result<()> {
+fn both_agree(src: &str, expected: Value) -> vitul::Result<()> {
     let host = HostRegistry::new();
     assert_eq!(eval_call(src, "f", vec![], &host)?, expected, "eval result");
     assert_eq!(vm_call(src, "f", vec![])?, expected, "vm result");
@@ -48,14 +48,14 @@ fn both_agree(src: &str, expected: Value) -> miniscript::Result<()> {
 }
 
 #[test]
-fn bool_equality_matches_the_vm() -> miniscript::Result<()> {
+fn bool_equality_matches_the_vm() -> vitul::Result<()> {
     both_agree("func f() { true == false }", Value::Bool(false))?;
     both_agree("func f() { true != false }", Value::Bool(true))?;
     Ok(())
 }
 
 #[test]
-fn string_concat_and_compare_match_the_vm() -> miniscript::Result<()> {
+fn string_concat_and_compare_match_the_vm() -> vitul::Result<()> {
     both_agree("func f() { \"ab\" + \"cd\" }", Value::from("abcd"))?;
     both_agree("func f() { \"abc\" < \"abd\" }", Value::Bool(true))?;
     both_agree("func f() { \"abc\" == \"abc\" }", Value::Bool(true))?;
@@ -70,7 +70,7 @@ struct Order {
 }
 
 #[test]
-fn handle_identity_matches_the_vm() -> miniscript::Result<()> {
+fn handle_identity_matches_the_vm() -> vitul::Result<()> {
     let src = "func f(a: Order, b: Order) { a == b }";
     let h = Handle::new(Order { id: 7 });
     let args = vec![Value::Handle(h.clone()), Value::Handle(h.clone())];
@@ -82,15 +82,15 @@ fn handle_identity_matches_the_vm() -> miniscript::Result<()> {
 }
 
 #[test]
-fn host_error_kind_is_preserved() -> miniscript::Result<()> {
+fn host_error_kind_is_preserved() -> vitul::Result<()> {
     let src = "func f() { boom() }";
     let err = {
         let mut host = HostRegistry::new();
         host.register(
             "boom",
             vec![],
-            miniscript::ty::Ty::I64,
-            Box::new(|_| Err(miniscript::Error::io("disk on fire"))),
+            vitul::ty::Ty::I64,
+            Box::new(|_| Err(vitul::Error::io("disk on fire"))),
         )?;
         eval_call(src, "f", vec![], &host).unwrap_err()
     };
@@ -99,8 +99,8 @@ fn host_error_kind_is_preserved() -> miniscript::Result<()> {
     assert!(err.message.contains("disk on fire"), "{}", err.message);
 
     let mut engine = Engine::new();
-    engine.register_fn("boom", vec![], miniscript::ty::Ty::I64, |_| {
-        Err(miniscript::Error::io("disk on fire"))
+    engine.register_fn("boom", vec![], vitul::ty::Ty::I64, |_| {
+        Err(vitul::Error::io("disk on fire"))
     })?;
     let script = engine.load_str(src)?;
     let vm_err = engine.call(&script, "f", vec![]).unwrap_err();

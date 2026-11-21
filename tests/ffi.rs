@@ -1,9 +1,9 @@
-//! C ABI boundary tests (the code that ships inside libminiscript.so).
+//! C ABI boundary tests (the code that ships inside libvitul.so).
 //!
 //! Device execution is verified by `scripts/android_build.sh` when a device is
 //! attached; these tests exercise the exact same FFI entry points on the host.
 
-use miniscript::ffi::{
+use vitul::ffi::{
     ms_abi_version, ms_call_i64, ms_last_error, ms_last_error_col, ms_last_error_line,
     ms_last_report, ms_script_call, ms_script_create, ms_script_create_cached, ms_script_free,
     ms_script_reload, MsVal, MsValOut, MS_ERR_BUFFER, MS_ERR_ENGINE, MS_ERR_NULL, MS_ERR_RUNTIME,
@@ -146,10 +146,10 @@ fn last_error_and_report() -> (String, String) {
     (err, report)
 }
 
-unsafe fn create_script(src: &str) -> *mut miniscript::ffi::MsScript {
+unsafe fn create_script(src: &str) -> *mut vitul::ffi::MsScript {
     let src = CString::new(src).unwrap();
-    let name = CString::new("test.ms").unwrap();
-    let mut ptr: *mut miniscript::ffi::MsScript = std::ptr::null_mut();
+    let name = CString::new("test.vt").unwrap();
+    let mut ptr: *mut vitul::ffi::MsScript = std::ptr::null_mut();
     let code = ms_script_create(src.as_ptr(), name.as_ptr(), &mut ptr);
     assert_eq!(code, MS_OK, "create failed: {}", last_error_and_report().0);
     ptr
@@ -157,7 +157,7 @@ unsafe fn create_script(src: &str) -> *mut miniscript::ffi::MsScript {
 
 /// Call `func` with `args`; returns (code, out, buffer).
 unsafe fn call_script(
-    ptr: *mut miniscript::ffi::MsScript,
+    ptr: *mut vitul::ffi::MsScript,
     func: &str,
     args: &[MsVal],
 ) -> (i32, MsValOut, Vec<u8>) {
@@ -191,11 +191,11 @@ fn ffi_script_handle_lifecycle() {
     // Zero-arg call returning Unit.
     let (code, out, _) = unsafe { call_script(ptr, "unit", &[]) };
     assert_eq!(code, MS_OK);
-    assert_eq!(out.tag, miniscript::ffi::MS_VAL_UNIT);
+    assert_eq!(out.tag, vitul::ffi::MS_VAL_UNIT);
 
     // Hot reload swaps the bytecode in place.
     let new_src = CString::new("func fib(n) { n * 10 }").unwrap();
-    let name = CString::new("test.ms").unwrap();
+    let name = CString::new("test.vt").unwrap();
     let code = unsafe { ms_script_reload(ptr, new_src.as_ptr(), name.as_ptr()) };
     assert_eq!(code, MS_OK, "reload failed: {}", last_error_and_report().0);
     let (code, out, _) = unsafe { call_script(ptr, "fib", &[val_i64(3)]) };
@@ -301,12 +301,12 @@ fn ffi_script_create_cached_roundtrips() {
     let cache = dir.join("demo.sbc");
     let src = "func fib(n) { if n < 2 { n } else { fib(n-1) + fib(n-2) } }";
     let src_c = CString::new(src).unwrap();
-    let name_c = CString::new("cached.ms").unwrap();
+    let name_c = CString::new("cached.vt").unwrap();
     let cache_c = CString::new(cache.to_string_lossy().as_bytes()).unwrap();
 
     // First create compiles and writes the cache; the second decodes it.
     let ptr1 = unsafe {
-        let mut p: *mut miniscript::ffi::MsScript = std::ptr::null_mut();
+        let mut p: *mut vitul::ffi::MsScript = std::ptr::null_mut();
         assert_eq!(
             ms_script_create_cached(src_c.as_ptr(), name_c.as_ptr(), cache_c.as_ptr(), &mut p),
             MS_OK,
@@ -317,7 +317,7 @@ fn ffi_script_create_cached_roundtrips() {
     };
     assert!(cache.exists(), "cache written best-effort");
     let ptr2 = unsafe {
-        let mut p: *mut miniscript::ffi::MsScript = std::ptr::null_mut();
+        let mut p: *mut vitul::ffi::MsScript = std::ptr::null_mut();
         assert_eq!(
             ms_script_create_cached(src_c.as_ptr(), name_c.as_ptr(), cache_c.as_ptr(), &mut p),
             MS_OK,
@@ -334,7 +334,7 @@ fn ffi_script_create_cached_roundtrips() {
     // A changed source invalidates the cache transparently.
     let other = CString::new("func fib(n) { n * 1000 }").unwrap();
     let ptr3 = unsafe {
-        let mut p: *mut miniscript::ffi::MsScript = std::ptr::null_mut();
+        let mut p: *mut vitul::ffi::MsScript = std::ptr::null_mut();
         assert_eq!(
             ms_script_create_cached(other.as_ptr(), name_c.as_ptr(), cache_c.as_ptr(), &mut p),
             MS_OK,
@@ -363,20 +363,20 @@ fn ffi_script_errors_carry_report_diagnostics() {
     let (err, report) = last_error_and_report();
     assert!(err.contains("division by zero"), "got: {}", err);
     assert_eq!(ms_last_error_line(), 2);
-    assert!(report.contains("--> test.ms:2:"), "got: {}", report);
+    assert!(report.contains("--> test.vt:2:"), "got: {}", report);
     assert!(report.contains("call stack"), "got: {}", report);
     assert!(report.contains("100 / x"), "source line rendered, got: {}", report);
     assert_eq!(unsafe { ms_script_free(ptr) }, MS_OK);
 
     // Compile failure at create: report rendered against the rejected source.
     let bad = CString::new("func go(x) {\n  let n: i64 = \"s\"\n  n\n}").unwrap();
-    let name = CString::new("bad.ms").unwrap();
-    let mut ptr: *mut miniscript::ffi::MsScript = std::ptr::null_mut();
+    let name = CString::new("bad.vt").unwrap();
+    let mut ptr: *mut vitul::ffi::MsScript = std::ptr::null_mut();
     let code = unsafe { ms_script_create(bad.as_ptr(), name.as_ptr(), &mut ptr) };
     assert_eq!(code, MS_ERR_ENGINE);
     let (err, report) = last_error_and_report();
     assert!(err.contains("expected i64"), "got: {}", err);
-    assert!(report.contains("--> bad.ms:2:"), "got: {}", report);
+    assert!(report.contains("--> bad.vt:2:"), "got: {}", report);
 }
 
 #[test]
@@ -452,7 +452,7 @@ fn ffi_script_thread_ownership_is_enforced() {
     // Calling from another thread must fail cleanly instead of racing the
     // Rc-backed internals.
     let handle = std::thread::spawn(move || {
-        let p = addr as *mut miniscript::ffi::MsScript;
+        let p = addr as *mut vitul::ffi::MsScript;
         let func = CString::new("go").unwrap();
         let mut out = MsValOut { tag: 0, i: 0, f: 0.0, len: 0 };
         let args = [val_i64(1)];

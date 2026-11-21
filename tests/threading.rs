@@ -7,13 +7,13 @@
 //! tests pin that model down: no hidden global state, and reload never leaves a
 //! script half-old/half-new.
 
-use miniscript::{register_fn, Engine, Value};
+use vitul::{register_fn, Engine, Value};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("miniscript_{}_{}", tag, std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vitul_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -81,7 +81,7 @@ fn concurrent_paths_can_compile_the_same_source() {
 #[test]
 fn reload_replaces_the_implementation_for_the_next_call() {
     let dir = temp_dir("reload_next");
-    let path = dir.join("v.ms");
+    let path = dir.join("v.vt");
     std::fs::write(&path, "func go(x) { x + 1 }").unwrap();
 
     let engine = Engine::new();
@@ -101,7 +101,7 @@ fn a_clone_keeps_the_bytecode_it_was_taken_from() {
     // run concurrently in safe Rust. A clone (an `Rc` of the pieces the caller
     // kept) must therefore keep evaluating the old function.
     let dir = temp_dir("reload_clone");
-    let path = dir.join("v.ms");
+    let path = dir.join("v.vt");
     std::fs::write(&path, "func go(x) { x + 1 }").unwrap();
 
     let engine = Engine::new();
@@ -120,7 +120,7 @@ fn a_clone_keeps_the_bytecode_it_was_taken_from() {
 #[test]
 fn a_failed_reload_leaves_the_old_script_usable() {
     let dir = temp_dir("reload_fail");
-    let path = dir.join("v.ms");
+    let path = dir.join("v.vt");
     std::fs::write(&path, "func go(x) { x + 1 }").unwrap();
 
     let engine = Engine::new();
@@ -139,7 +139,7 @@ fn a_failed_reload_leaves_the_old_script_usable() {
 #[test]
 fn reload_refreshes_the_source_used_for_diagnostics() {
     let dir = temp_dir("reload_diag");
-    let path = dir.join("v.ms");
+    let path = dir.join("v.vt");
     std::fs::write(&path, "func go(x) { x + 1 }").unwrap();
 
     let engine = Engine::new();

@@ -1,11 +1,11 @@
 //! Phase 3: `.sbc` bytecode cache — roundtrip, staleness, registry pinning,
 //! and corruption handling.
 
-use miniscript::cache::{self, HostFingerprint};
-use miniscript::ir::{Function, Instr, Op, Program, Regs};
-use miniscript::ty::Ty;
-use miniscript::value::Value;
-use miniscript::{register_fn, Engine, Script};
+use vitul::cache::{self, HostFingerprint};
+use vitul::ir::{Function, Instr, Op, Program, Regs};
+use vitul::ty::Ty;
+use vitul::value::Value;
+use vitul::{register_fn, Engine, Script};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -32,12 +32,12 @@ func unit() { }
 "#;
 
 fn temp_dir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("miniscript_sbc_{}_{}", std::process::id(), name));
+    let d = std::env::temp_dir().join(format!("vitul_sbc_{}_{}", std::process::id(), name));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
 
-fn script_with_host() -> miniscript::Result<(Engine, Script)> {
+fn script_with_host() -> vitul::Result<(Engine, Script)> {
     let mut engine = Engine::new();
     register_fn!(engine, "scale", (i64) -> i64, |x| x * 3)?;
     let script = engine.load_str(SRC)?;
@@ -45,7 +45,7 @@ fn script_with_host() -> miniscript::Result<(Engine, Script)> {
 }
 
 #[test]
-fn sbc_roundtrip_preserves_program_and_behavior() -> miniscript::Result<()> {
+fn sbc_roundtrip_preserves_program_and_behavior() -> vitul::Result<()> {
     let (engine, script) = script_with_host()?;
     let path = temp_dir("roundtrip").join("prog.sbc");
     engine.save_sbc(&script, &path)?;
@@ -81,7 +81,7 @@ fn sbc_roundtrip_preserves_program_and_behavior() -> miniscript::Result<()> {
 /// Every opcode in the instruction set must survive encode -> decode with its
 /// fields intact. This is the guard against a mistyped tag in the opcode table.
 #[test]
-fn every_opcode_roundtrips_exactly() -> miniscript::Result<()> {
+fn every_opcode_roundtrips_exactly() -> vitul::Result<()> {
     let three = || Regs::new(&[1, 2, 3]);
     let ops: Vec<Op> = vec![
         Op::ConstI64 { dst: 1, val: -42 },
@@ -184,9 +184,9 @@ fn every_opcode_roundtrips_exactly() -> miniscript::Result<()> {
 }
 
 #[test]
-fn load_cached_rebuilds_on_change_and_cache_is_self_contained() -> miniscript::Result<()> {
+fn load_cached_rebuilds_on_change_and_cache_is_self_contained() -> vitul::Result<()> {
     let dir = temp_dir("stale");
-    let path = dir.join("rule.ms");
+    let path = dir.join("rule.vt");
     let sbc = path.with_extension("sbc");
     let engine = Engine::new();
 
@@ -215,7 +215,7 @@ fn load_cached_rebuilds_on_change_and_cache_is_self_contained() -> miniscript::R
 }
 
 #[test]
-fn cache_is_rejected_when_host_registry_changed() -> miniscript::Result<()> {
+fn cache_is_rejected_when_host_registry_changed() -> vitul::Result<()> {
     let path = temp_dir("fingerprint").join("host.sbc");
     let mut e1 = Engine::new();
     register_fn!(e1, "f", (i64) -> i64, |x| x + 1)?;
@@ -243,7 +243,7 @@ fn cache_is_rejected_when_host_registry_changed() -> miniscript::Result<()> {
 }
 
 #[test]
-fn damaged_cache_returns_errors_without_panicking() -> miniscript::Result<()> {
+fn damaged_cache_returns_errors_without_panicking() -> vitul::Result<()> {
     let (engine, script) = script_with_host()?;
     let bytes = cache::encode(&script, &engine_host_fp(&engine));
     let fp = engine_host_fp(&engine);
@@ -265,7 +265,7 @@ fn damaged_cache_returns_errors_without_panicking() -> miniscript::Result<()> {
     ];
     for (i, case) in cases.iter().enumerate() {
         let err = cache::decode(case, &fp).unwrap_err();
-        assert_eq!(err.kind, miniscript::ErrorKind::Io, "case {i}");
+        assert_eq!(err.kind, vitul::ErrorKind::Io, "case {i}");
     }
     Ok(())
 }
@@ -278,7 +278,7 @@ fn engine_host_fp(_engine: &Engine) -> HostFingerprint {
 }
 
 #[test]
-fn compile_cached_needs_no_source_file_on_disk() -> miniscript::Result<()> {
+fn compile_cached_needs_no_source_file_on_disk() -> vitul::Result<()> {
     // Android-style flow: source arrives as an in-memory asset/network payload.
     let dir = temp_dir("compile_cached");
     let cache = dir.join("rules.sbc");

@@ -19,7 +19,7 @@ use crate::validate;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub const MAGIC: &[u8; 4] = b"MSBC";
+pub const MAGIC: &[u8; 4] = b"VTBC";
 /// v2 adds the `JmpIf*I64Imm` opcodes (tags 66–71), which carry both a jump
 /// target and a comparison literal; the wire record grew a second `imm2` word.
 /// v3 changes no wire shape: the `()` literal now compiles to `Ty::Unit`

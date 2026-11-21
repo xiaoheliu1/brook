@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! [type] error at 2:18: arithmetic: expected i64, found str
-//!   --> price.ms:2:18
+//!   --> price.vt:2:18
 //!    |
 //!  2 |     let s = "中文" + 1
 //!    |                    ^

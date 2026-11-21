@@ -2,7 +2,7 @@
 //! and the wording of type errors. Plus `//` and `/* */` comments at the
 //! script level (the lexer has its own unit tests for the token level).
 
-use miniscript::{Engine, ErrorKind, Value};
+use vitul::{Engine, ErrorKind, Value};
 
 fn eval(src: &str) -> Value {
     let engine = Engine::new();

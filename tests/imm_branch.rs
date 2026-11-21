@@ -2,9 +2,9 @@
 //! comparison operators, boundary literals and negative literals all produce
 //! the same result as the unfused (register-register) form.
 
-use miniscript::{Engine, Value};
+use vitul::{Engine, Value};
 
-fn check(src: &str, n: i64, expect: i64) -> miniscript::Result<()> {
+fn check(src: &str, n: i64, expect: i64) -> vitul::Result<()> {
     let e = Engine::new();
     let script = e.load_str(src)?;
     assert_eq!(
@@ -16,7 +16,7 @@ fn check(src: &str, n: i64, expect: i64) -> miniscript::Result<()> {
 }
 
 #[test]
-fn all_six_i64_comparisons_against_literal() -> miniscript::Result<()> {
+fn all_six_i64_comparisons_against_literal() -> vitul::Result<()> {
     // `if n < 2 { 1 } else { 0 }` returns 1 iff the predicate is true.
     check("func f(n) { if n < 2 { 1 } else { 0 } }", 1, 1)?;
     check("func f(n) { if n < 2 { 1 } else { 0 } }", 2, 0)?;
@@ -34,7 +34,7 @@ fn all_six_i64_comparisons_against_literal() -> miniscript::Result<()> {
 }
 
 #[test]
-fn negative_literal_and_loop_condition() -> miniscript::Result<()> {
+fn negative_literal_and_loop_condition() -> vitul::Result<()> {
     // Negative immediate must round-trip through `imm as u64` in the cache.
     check("func f(n) { if n >= -1 { 1 } else { 0 } }", -1, 1)?;
     check("func f(n) { if n >= -1 { 1 } else { 0 } }", -2, 0)?;
@@ -50,7 +50,7 @@ fn negative_literal_and_loop_condition() -> miniscript::Result<()> {
 }
 
 #[test]
-fn fib_recursion_still_correct() -> miniscript::Result<()> {
+fn fib_recursion_still_correct() -> vitul::Result<()> {
     let e = Engine::new();
     let s = e.load_str(
         "func fib(n) { if n < 2 { return n } fib(n-1) + fib(n-2) }",

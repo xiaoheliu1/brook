@@ -11,7 +11,7 @@
 
 ## 1. 宿主暴露函数完整清单（按文件分组，全量不抽样）
 
-返回类型标注：**`rhai::Map`**、**`rhai::Array`**、**`Dynamic`**、**`String`** 为对 miniscript 有直接影响的类型。所有 `Result<T, ScriptError>` 中的 `ScriptError = Box<rhai::EvalAltResult>`（`src/toolkit/mod.rs:367`）——错误传播走 rhai 异常通道，miniscript 无异常时这是结构性差异。
+返回类型标注：**`rhai::Map`**、**`rhai::Array`**、**`Dynamic`**、**`String`** 为对 vitul 有直接影响的类型。所有 `Result<T, ScriptError>` 中的 `ScriptError = Box<rhai::EvalAltResult>`（`src/toolkit/mod.rs:367`）——错误传播走 rhai 异常通道，vitul 无异常时这是结构性差异。
 
 ### src/engine.rs（2 个）
 | 脚本名 | 参数 | 返回类型（脚本侧） | 行号 |
@@ -291,7 +291,7 @@
    - 普通错误 `Err` → 退出码 1。
 4. 脚本→宿主的"数据"通道**只有 stdout 字符串和 output/ 落盘文件**；返回值只需"能 `to_string()`"。
 
-**对 miniscript 的直接推论**：
+**对 vitul 的直接推论**：
 - 宿主侧不依赖 Dynamic 的多态——但 224 个注册里 45+22+2 个返回/接收 Map/Array/Dynamic，且 11/34 个脚本用 `#{}` 字面量构造 Map 传给宿主或承接 Map 结果取字段。换成"i64/f64/bool/str/Opaque/元组"后，这些返回值要么改 Opaque 句柄 + 每字段 getter（字段种类 100+ 键），要么元组化（ADR-013 的 2 元组限制已由桥接层扩展解除，见 D-035）。
 - try/catch（22/34 脚本，253 个块）是"预期内失败也要继续"的惯用法；无异常的引擎需要宿主把 Result 变成值（如 `(ok, payload)` 元组）+ 脚本重写全部分支。
 - FnPtr 闭包只有 3 个脚本 7 处使用，唯一宿主消费者是 `hold_key/hold_mouse`——可用"具名函数 + 轮询 is_cancelled"替代，面积小。

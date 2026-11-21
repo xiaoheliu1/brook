@@ -4,12 +4,12 @@
 //! are compiled normally, so a hinted slot that is also read by the operation
 //! (`x = x + 1`, `x = add1(x) + x`) must still see the old value.
 
-use miniscript::ir::Op;
-use miniscript::value::Value;
-use miniscript::{register_fn, Engine};
+use vitul::ir::Op;
+use vitul::value::Value;
+use vitul::{register_fn, Engine};
 
 #[test]
-fn binary_assignment_writes_target_slot_without_mov() -> miniscript::Result<()> {
+fn binary_assignment_writes_target_slot_without_mov() -> vitul::Result<()> {
     let engine = Engine::new();
     let script = engine.load_str("func f(a, b) { let x = 0\n x = a + b\n x }")?;
     let code = &script.code.funcs[0].code;
@@ -31,7 +31,7 @@ fn binary_assignment_writes_target_slot_without_mov() -> miniscript::Result<()> 
 }
 
 #[test]
-fn hinted_slot_may_also_be_an_operand() -> miniscript::Result<()> {
+fn hinted_slot_may_also_be_an_operand() -> vitul::Result<()> {
     let mut engine = Engine::new();
     register_fn!(engine, "add1", (i64) -> i64, |x| x + 1)?;
 
@@ -46,7 +46,7 @@ fn hinted_slot_may_also_be_an_operand() -> miniscript::Result<()> {
 }
 
 #[test]
-fn fallback_nodes_keep_their_explicit_mov() -> miniscript::Result<()> {
+fn fallback_nodes_keep_their_explicit_mov() -> vitul::Result<()> {
     let engine = Engine::new();
     // `if` has its own result register; the hint must not leak into branches.
     let branch = engine.load_str("func f(a, b, c) { let x = 0\n x = if c { a } else { b }\n x }")?;
@@ -66,7 +66,7 @@ fn fallback_nodes_keep_their_explicit_mov() -> miniscript::Result<()> {
 }
 
 #[test]
-fn short_circuit_and_literals_honour_the_hint() -> miniscript::Result<()> {
+fn short_circuit_and_literals_honour_the_hint() -> vitul::Result<()> {
     let engine = Engine::new();
     let logic = engine.load_str("func f(a, b) { let x = true\n x = a > 0 && b > 0\n x }")?;
     assert_eq!(
