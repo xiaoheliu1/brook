@@ -31,7 +31,9 @@ pub const MAGIC: &[u8; 4] = b"VTBC";
 /// v4 新增依赖清单段（约定式 import，ADR-017）：记录主脚本 import 的
 /// 文件路径与内容 hash，`load_cached`/`compile_cached` 加载时逐一校验，
 /// 任一依赖变更 → 缓存失效重建。wire 布局仅在末尾追加，VERSION 3→4。
-pub const VERSION: u16 = 4;
+/// ADR-018：签名类型新增 `Ty::Arr`（write_ty tag 9），VERSION 4→5 强制重建，
+/// 防旧缓存与新语义混用。
+pub const VERSION: u16 = 5;
 
 /// (name, slot id, params, ret), sorted by name. `CallHost` instructions embed
 /// the slot id, so both the set of functions and their order must be stable.
@@ -115,6 +117,10 @@ fn write_ty(w: &mut Writer, ty: &Ty) {
             w.u32(ts.len() as u32);
             for t in ts { write_ty(w, t); }
         }
+        Ty::Arr(t) => {
+            w.u8(9);
+            write_ty(w, t);
+        }
         Ty::Var(id) => { w.u8(7); w.u64(*id as u64); }
         Ty::Unit => w.u8(8),
     }
@@ -136,6 +142,7 @@ fn read_ty(r: &mut Reader<'_>) -> Result<Ty> {
         }
         7 => Ty::Var(usize::try_from(r.u64()?).map_err(|_| Error::io("cache: var id overflow"))?),
         8 => Ty::Unit,
+        9 => Ty::Arr(Box::new(read_ty(r)?)),
         other => return Err(Error::io(format!("cache: unknown type tag {other}"))),
     })
 }
@@ -363,6 +370,15 @@ op_table! {
         Op::JmpIfGtI64Imm { a: w.r[0], imm: w.imm2 as i64, target: wire_target(&w)? };
     71, JmpIfGeI64Imm, { a, imm, target }, [a, 0, 0], target as u64, imm as u64, Vec::new(),
         Op::JmpIfGeI64Imm { a: w.r[0], imm: w.imm2 as i64, target: wire_target(&w)? };
+    // v5: arrays (ADR-018). Appended; tags 1–71 keep their meaning.
+    72, NewArr, { dst }, [dst, 0, 0], 0, 0, Vec::new(),
+        Op::NewArr { dst: w.r[0] };
+    73, ArrPush, { arr, src }, [arr, src, 0], 0, 0, Vec::new(),
+        Op::ArrPush { arr: w.r[0], src: w.r[1] };
+    74, ArrLen, { dst, src }, [dst, src, 0], 0, 0, Vec::new(),
+        Op::ArrLen { dst: w.r[0], src: w.r[1] };
+    75, ArrGet, { dst, base, idx }, [dst, base, idx], 0, 0, Vec::new(),
+        Op::ArrGet { dst: w.r[0], base: w.r[1], idx: w.r[2] };
 }
 
 fn write_instr(w: &mut Writer, ins: &Instr) {

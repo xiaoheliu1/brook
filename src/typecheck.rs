@@ -145,6 +145,7 @@ impl Checker {
                 None => Ty::Var(*id),
             },
             Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.resolve(t)).collect()),
+            Ty::Arr(t) => Ty::Arr(Box::new(self.resolve(t))),
             other => other.clone(),
         }
     }
@@ -176,6 +177,7 @@ impl Checker {
                 }
                 Ok(())
             }
+            (Ty::Arr(x), Ty::Arr(y)) => self.unify(&x, &y, span),
             (x, y) => Err(format!("type mismatch: expected {}, found {}", x.render(), y.render())),
         }
     }
@@ -283,15 +285,45 @@ impl Checker {
                 body_res?;
                 Ok(Some(Ty::Unit))
             }
-            Stmt::For { var, start, end, body, span } => {
-                let st = self.infer_expr(start)?;
-                let et = self.infer_expr(end)?;
-                self.unify(&Ty::I64, &st, *span)
-                    .map_err(|e| Error::type_error(format!("for range start: {}", e), *span))?;
-                self.unify(&Ty::I64, &et, *span)
-                    .map_err(|e| Error::type_error(format!("for range end: {}", e), *span))?;
+            Stmt::For { var, iter, body, span } => {
+                let var_ty = match iter {
+                    ForIter::Range { start, end } => {
+                        let st = self.infer_expr(start)?;
+                        let et = self.infer_expr(end)?;
+                        self.unify(&Ty::I64, &st, *span)
+                            .map_err(|e| Error::type_error(format!("for range start: {}", e), *span))?;
+                        self.unify(&Ty::I64, &et, *span)
+                            .map_err(|e| Error::type_error(format!("for range end: {}", e), *span))?;
+                        Ty::I64
+                    }
+                    ForIter::List(e) => {
+                        // ADR-018: `for x in arr` — the loop variable takes the
+                        // array's element type; an unresolved base is pinned to
+                        // `Arr(elem)` so the first push can still settle it.
+                        let it = self.infer_expr(e)?;
+                        let elem = match self.resolve(&it) {
+                            Ty::Arr(t) => *t,
+                            Ty::Var(_) => {
+                                let elem = self.fresh();
+                                self.unify(&it, &Ty::Arr(Box::new(elem.clone())), *span)
+                                    .map_err(|e| Error::type_error(format!("for-in: {}", e), *span))?;
+                                elem
+                            }
+                            other => {
+                                return Err(Error::type_error(
+                                    format!(
+                                        "for-in expects a range or an array, found {}",
+                                        other.render()
+                                    ),
+                                    *span,
+                                ))
+                            }
+                        };
+                        elem
+                    }
+                };
                 self.push_scope();
-                self.bind(var, Ty::I64);
+                self.bind(var, var_ty);
                 self.loop_depth += 1;
                 let body_res = self.infer_block(body);
                 self.loop_depth -= 1;
@@ -389,7 +421,7 @@ impl Checker {
                         self.unify(&lt, &rt, *span)
                             .map_err(|e| Error::type_error(format!("comparison: {}", e), *span))?;
                         let t = self.resolve(&lt);
-                        if matches!(t, Ty::Tuple(_) | Ty::Unit) {
+                        if matches!(t, Ty::Tuple(_) | Ty::Arr(_) | Ty::Unit) {
                             return Err(Error::type_error(
                                 format!("equality comparison is not supported for {}", t.render()),
                                 *span,
@@ -492,6 +524,45 @@ impl Checker {
                     )),
                 }
             }
+            Expr::Array(items, span) => {
+                // Empty `[]` defers to usage: the element variable settles on
+                // the first `push` / index / annotation. Non-empty: all
+                // elements unify with the first (homogeneous arrays, ADR-018).
+                if items.is_empty() {
+                    return Ok(Ty::Arr(Box::new(self.fresh())));
+                }
+                let first = self.infer_expr(&items[0])?;
+                for it in &items[1..] {
+                    let t = self.infer_expr(it)?;
+                    self.unify(&first, &t, *span)
+                        .map_err(|e| Error::type_error(format!("array literal: {}", e), *span))?;
+                }
+                Ok(Ty::Arr(Box::new(self.resolve(&first))))
+            }
+            Expr::DynIndex { base, index, span } => {
+                let it = self.infer_expr(index)?;
+                self.unify(&Ty::I64, &it, *span)
+                    .map_err(|e| Error::type_error(format!("array index: {}", e), *span))?;
+                let base_ty = self.infer_expr(base)?;
+                match self.resolve(&base_ty) {
+                    Ty::Arr(t) => Ok(self.resolve(&t)),
+                    Ty::Var(_) => {
+                        let elem = self.fresh();
+                        self.unify(&base_ty, &Ty::Arr(Box::new(elem.clone())), *span)
+                            .map_err(|e| Error::type_error(e, *span))?;
+                        Ok(elem)
+                    }
+                    // Guide the common mistake to the right syntax.
+                    Ty::Tuple(_) => Err(Error::type_error(
+                        "tuples are indexed with `.0` / `.1`; `[i]` is for arrays",
+                        *span,
+                    )),
+                    other => Err(Error::type_error(
+                        format!("cannot index {} with `[i]`", other.render()),
+                        *span,
+                    )),
+                }
+            }
             Expr::BlockExpr(b, _) => Ok(self.infer_block(b)?.unwrap_or(Ty::Unit)),
         }
     }
@@ -528,6 +599,107 @@ impl Checker {
             return Ok(family);
         }
 
+        // ADR-018: the three collection builtins are polymorphic over the
+        // array's element type, which the fixed signatures below cannot
+        // express — they are typed here instead.
+        if name == "push" {
+            if args.len() != 2 {
+                return Err(Error::type_error(
+                    format!("`push` expects 2 arguments, got {}", args.len()),
+                    span,
+                ));
+            }
+            let arr_ty = self.infer_expr(&args[0])?;
+            let elem_ty = self.infer_expr(&args[1])?;
+            let elem = match self.resolve(&arr_ty) {
+                Ty::Arr(t) => *t,
+                // An unresolved base gets pinned to `Arr(elem)` so
+                // `let fails = []` + `push(fails, "x")` infers `[str]`.
+                Ty::Var(_) => {
+                    let elem = self.fresh();
+                    self.unify(&arr_ty, &Ty::Arr(Box::new(elem.clone())), span)
+                        .map_err(|e| Error::type_error(format!("push: {}", e), span))?;
+                    elem
+                }
+                other => {
+                    return Err(Error::type_error(
+                        format!("push expects an array, found {}", other.render()),
+                        span,
+                    ))
+                }
+            };
+            self.unify(&elem, &elem_ty, span)
+                .map_err(|e| Error::type_error(format!("push: {}", e), span))?;
+            return Ok(Ty::Unit);
+        }
+        if name == "len" {
+            if args.len() != 1 {
+                return Err(Error::type_error(
+                    format!("`len` expects 1 argument, got {}", args.len()),
+                    span,
+                ));
+            }
+            let at = self.infer_expr(&args[0])?;
+            return match self.resolve(&at) {
+                Ty::Str | Ty::Tuple(_) | Ty::Arr(_) => Ok(Ty::I64),
+                // An unresolved base keeps the pre-ADR-018 meaning (`str`):
+                // `func f(s) { len(s) }` called with a string must keep
+                // compiling. An array-typed base never lands here — it is
+                // already `Arr(..)`, and array params used only through len
+                // take an annotation (`xs: [str]`) as the escape hatch.
+                Ty::Var(_) => {
+                    self.unify(&at, &Ty::Str, span)
+                        .map_err(|e| Error::type_error(format!("len: {}", e), span))?;
+                    Ok(Ty::I64)
+                }
+                other => Err(Error::type_error(
+                    format!("len expects a str, tuple or array, found {}", other.render()),
+                    span,
+                )),
+            };
+        }
+        if name == "contains" {
+            if args.len() != 2 {
+                return Err(Error::type_error(
+                    format!("`contains` expects 2 arguments, got {}", args.len()),
+                    span,
+                ));
+            }
+            let hay = self.infer_expr(&args[0])?;
+            let needle = self.infer_expr(&args[1])?;
+            // The needle type disambiguates an unresolved haystack: a str
+            // needle keeps the classic substring reading (`contains(s, "x")`),
+            // any other needle can only be an element of an array. Either way
+            // the haystack itself is pinned — an unconstrained variable would
+            // otherwise default to i64 at signature resolution and reject
+            // every boundary call.
+            let needle_resolved = self.resolve(&needle);
+            let elem = match self.resolve(&hay) {
+                Ty::Arr(t) => *t,
+                Ty::Str => Ty::Str,
+                Ty::Var(_) if matches!(needle_resolved, Ty::Str) => {
+                    self.unify(&hay, &Ty::Str, span)
+                        .map_err(|e| Error::type_error(format!("contains: {}", e), span))?;
+                    Ty::Str
+                }
+                Ty::Var(_) => {
+                    let arr = Ty::Arr(Box::new(needle_resolved.clone()));
+                    self.unify(&hay, &arr, span)
+                        .map_err(|e| Error::type_error(format!("contains: {}", e), span))?;
+                    needle_resolved
+                }
+                other => {
+                    return Err(Error::type_error(
+                        format!("contains expects a str or array, found {}", other.render()),
+                        span,
+                    ))
+                }
+            };
+            self.unify(&elem, &needle, span)
+                .map_err(|e| Error::type_error(format!("contains: {}", e), span))?;
+            return Ok(Ty::Bool);
+        }
+
         // Built-in functions have special signatures.
         if let Some((params, ret)) = builtin_signature(name, args.len()) {
             // `to_str` is type-polymorphic over the scalar types only. We still
@@ -539,7 +711,7 @@ impl Checker {
                 let at = self.infer_expr(arg)?;
                 if is_to_str {
                     let resolved = self.resolve(&at);
-                    if matches!(resolved, Ty::Tuple(_) | Ty::Handle(_) | Ty::Unit) {
+                    if matches!(resolved, Ty::Tuple(_) | Ty::Arr(_) | Ty::Handle(_) | Ty::Unit) {
                         return Err(Error::type_error(
                             format!("to_str does not support {}", resolved.render()),
                             span,
@@ -586,6 +758,7 @@ fn occurs(id: usize, ty: &Ty) -> bool {
     match ty {
         Ty::Var(j) => *j == id,
         Ty::Tuple(ts) => ts.iter().any(|t| occurs(id, t)),
+        Ty::Arr(t) => occurs(id, t),
         _ => false,
     }
 }
@@ -595,6 +768,7 @@ fn default_vars(ty: Ty) -> Ty {
     match ty {
         Ty::Var(_) => Ty::I64,
         Ty::Tuple(ts) => Ty::Tuple(ts.into_iter().map(default_vars).collect()),
+        Ty::Arr(t) => Ty::Arr(Box::new(default_vars(*t))),
         other => other,
     }
 }
@@ -616,6 +790,7 @@ pub fn is_builtin(name: &str) -> bool {
             | "to_i64"
             | "to_f64"
             | "to_str"
+            | "push"
     )
 }
 
@@ -640,6 +815,7 @@ pub fn builtin_ret(id: u8) -> Ty {
         10 => Ty::I64,                             // to_i64
         11 => Ty::F64,                             // to_f64
         16 | 17 | 18 => Ty::I64,                   // abs/min/max on i64
+        19 => Ty::Unit,                            // push (ADR-018)
         _ => Ty::Unit,
     }
 }
@@ -649,9 +825,9 @@ pub fn builtin_ret(id: u8) -> Ty {
 /// `abs`/`min`/`max` are deliberately absent: they are handled by
 /// [`numeric_builtin_arity`] because their result type follows the arguments.
 fn builtin_signature(name: &str, argc: usize) -> Option<(Vec<Ty>, Ty)> {
+    // `len` / `contains` / `push` are typed in `infer_call` (element-type
+    // polymorphism, ADR-018) and must not appear here.
     let sig = match (name, argc) {
-        ("len", 1) => (vec![Ty::Str], Ty::I64),
-        ("contains", 2) => (vec![Ty::Str, Ty::Str], Ty::Bool),
         ("substr", 3) => (vec![Ty::Str, Ty::I64, Ty::I64], Ty::Str),
         ("to_i64", 1) => (vec![Ty::F64], Ty::I64),
         ("to_f64", 1) => (vec![Ty::I64], Ty::F64),

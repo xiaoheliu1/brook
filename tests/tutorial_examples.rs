@@ -349,6 +349,7 @@ impl TyString for Value {
             Value::Str(_) => "str".into(),
             Value::Handle(_) => "handle".into(),
             Value::Tuple(_) => "tuple".into(),
+            Value::Arr(_) => "array".into(),
             Value::Unit => "()".into(),
         }
     }

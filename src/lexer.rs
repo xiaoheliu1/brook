@@ -298,6 +298,8 @@ impl<'a> Lexer<'a> {
                 b'}' => TokenKind::RBrace,
                 b',' => TokenKind::Comma,
                 b'.' => TokenKind::Dot,
+                b'[' => TokenKind::LBracket,
+                b']' => TokenKind::RBracket,
                 b':' => TokenKind::Colon,
                 _ => {
                     // Decode the full UTF-8 scalar so the message shows the

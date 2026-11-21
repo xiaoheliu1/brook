@@ -196,6 +196,21 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
                     reg(dst, "dst")?;
                     reg(base, "base")?;
                 }
+
+                Op::NewArr { dst } => reg(dst, "dst")?,
+                Op::ArrPush { arr, src } => {
+                    reg(arr, "arr")?;
+                    reg(src, "src")?;
+                }
+                Op::ArrLen { dst, src } => {
+                    reg(dst, "dst")?;
+                    reg(src, "src")?;
+                }
+                Op::ArrGet { dst, base, idx } => {
+                    reg(dst, "dst")?;
+                    reg(base, "base")?;
+                    reg(idx, "idx")?;
+                }
             }
         }
     }

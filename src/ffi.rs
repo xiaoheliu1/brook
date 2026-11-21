@@ -462,6 +462,11 @@ unsafe fn value_to_out(
         Value::Tuple(_) => Err(Failure::contract(
             "tuple results cannot cross the C ABI; return a scalar or str",
         )),
+        // ADR-018: `MsVal` is a flat scalar struct; array results must cross
+        // the boundary through the Rust API (`Vec<T>` HostResult) instead.
+        Value::Arr(_) => Err(Failure::contract(
+            "array results cannot cross the C ABI; return a scalar or str",
+        )),
     }
 }
 

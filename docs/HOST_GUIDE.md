@@ -109,7 +109,37 @@ register_fn!(engine, "hsl_to_rgb", (i64) -> (i64, i64, i64), |h| (h * 2, h * 3, 
 register_fn!(engine, "take3", ((i64, i64, i64)) -> i64, |t| t.0 + t.1 + t.2)?;
 ```
 
-检查时机：**宿主返回值**的形状编译期已知（签名写死），脚本索引越界是编译错误；**脚本函数参数**（未标注）由使用方式反推「至少 N 元」，运行时对账（≥ 即可，多出的无害）。变长集合 → `Opaque<集合>` + count/indexed getter。
+检查时机：**宿主返回值**的形状编译期已知（签名写死），脚本索引越界是编译错误；**脚本函数参数**（未标注）由使用方式反推「至少 N 元」，运行时对账（≥ 即可，多出的无害）。
+
+## 7.1 宿主返回 / 接收数组（`Vec<T>`，ADR-018）
+
+数组进入语言后，变长集合不再需要 `Opaque<T>` + getter——`Vec<T>` 直接过边界：
+
+```rust
+// 返回记录列表：脚本侧签名是 [(str, str, bool, i64)]
+register_fn!(engine, "fs_list", (String) -> Vec<(String, String, bool, i64)>, |dir| {
+    vec![ (format!("{dir}/a.txt"), "a.txt".into(), true, 3) ]
+})?;
+
+// 接收数组参数：元素从脚本数组克隆出来（快照，之后脚本 push 不影响宿主拿到的副本）
+register_fn!(engine, "sum_list", (Vec<i64>) -> i64, |xs: Vec<i64>| xs.iter().sum())?;
+```
+
+```text
+// 脚本侧：for r in rows + push 就是集合操作的全部形态
+let rows = fs_list(unc)
+let names = []
+for r in rows {
+    if r.2 { push(names, r.0) }
+}
+```
+
+语义要点：
+
+- **元素类型静态校验**：`Vec<T>` 的 `T` 决定 `[T]`，类型不匹配编译报错；值层面运行时再对账一次（`type_matches` 递归校验每个元素）
+- **边界是快照**：脚本数组传进宿主 = 克隆；宿主返回 `Vec<T>` = 生成新数组。两侧互不共享内部状态（引用语义只在脚本内部成立：`let b = a` 是别名）
+- **只读遍历、push、len、contains 是 v1 全部能力**；下标赋值 `arr[i] = x`、`pop` 等暂未提供
+- **C ABI（`MsVal`）不承载数组**——那是扁平标量结构，数组结果跨界返回契约错误；Android 侧要集合就走 Rust API
 
 ## 8. 热重载
 

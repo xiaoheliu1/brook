@@ -188,25 +188,65 @@ impl<'a> Interpreter<'a> {
                 }
                 Ok(Flow::Normal(Value::Unit))
             }
-            Stmt::For { var, start, end, body, .. } => {
-                let s = self.eval_expr(start)?.as_i64()?;
-                let e = self.eval_expr(end)?.as_i64()?;
-                let mut i = s;
-                while i < e {
-                    self.tick(body.span)?;
-                    self.scopes.push(HashMap::new());
-                    self.scopes.last_mut().unwrap().insert(var.clone(), Value::I64(i));
-                    let flow = self.exec_block(body);
-                    self.scopes.pop();
-                    match flow? {
-                        Flow::Normal(_) | Flow::Continue => {}
-                        Flow::Break => break,
-                        Flow::Return(v) => return Ok(Flow::Return(v)),
+            Stmt::For { var, iter, body, .. } => match iter {
+                ForIter::Range { start, end } => {
+                    let s = self.eval_expr(start)?.as_i64()?;
+                    let e = self.eval_expr(end)?.as_i64()?;
+                    let mut i = s;
+                    while i < e {
+                        self.tick(body.span)?;
+                        self.scopes.push(HashMap::new());
+                        self.scopes.last_mut().unwrap().insert(var.clone(), Value::I64(i));
+                        let flow = self.exec_block(body);
+                        self.scopes.pop();
+                        match flow? {
+                            Flow::Normal(_) | Flow::Continue => {}
+                            Flow::Break => break,
+                            Flow::Return(v) => return Ok(Flow::Return(v)),
+                        }
+                        i = i.checked_add(1).ok_or_else(|| Error::runtime("for loop counter overflow"))?;
                     }
-                    i = i.checked_add(1).ok_or_else(|| Error::runtime("for loop counter overflow"))?;
+                    Ok(Flow::Normal(Value::Unit))
                 }
-                Ok(Flow::Normal(Value::Unit))
-            }
+                ForIter::List(arr_expr) => {
+                    // ADR-018. The payload Rc is cloned out so the loop can
+                    // run the body without holding a RefCell borrow (a body
+                    // that pushes into the same array would otherwise panic).
+                    // Elements are re-read every iteration, so mutation during
+                    // iteration is visible — same as the VM's index walk.
+                    let arr = match self.eval_expr(arr_expr)? {
+                        Value::Arr(rc) => rc,
+                        other => {
+                            return Err(Error::runtime(format!(
+                                "for-in expects a range or an array, found {}",
+                                other.ty()
+                            )))
+                        }
+                    };
+                    let mut i = 0usize;
+                    loop {
+                        self.tick(body.span)?;
+                        let elem = {
+                            let items = arr.borrow();
+                            if i >= items.len() {
+                                break;
+                            }
+                            items[i].clone()
+                        };
+                        self.scopes.push(HashMap::new());
+                        self.scopes.last_mut().unwrap().insert(var.clone(), elem);
+                        let flow = self.exec_block(body);
+                        self.scopes.pop();
+                        match flow? {
+                            Flow::Normal(_) | Flow::Continue => {}
+                            Flow::Break => break,
+                            Flow::Return(v) => return Ok(Flow::Return(v)),
+                        }
+                        i += 1;
+                    }
+                    Ok(Flow::Normal(Value::Unit))
+                }
+            },
             Stmt::Break { .. } => Ok(Flow::Break),
             Stmt::Continue { .. } => Ok(Flow::Continue),
         }
@@ -285,6 +325,36 @@ impl<'a> Interpreter<'a> {
                         Error::runtime_at(format!("tuple index {} out of range", index), *span)
                     }),
                     _ => Err(Error::runtime_at("cannot index non-tuple", *span)),
+                }
+            }
+            Expr::Array(items, _) => {
+                let mut vs = Vec::with_capacity(items.len());
+                for it in items {
+                    vs.push(self.eval_expr(it)?);
+                }
+                Ok(Value::Arr(Rc::new(std::cell::RefCell::new(vs))))
+            }
+            Expr::DynIndex { base, index, span } => {
+                let i = self.eval_expr(index)?.as_i64()?;
+                let b = self.eval_expr(base)?;
+                match b {
+                    Value::Arr(items) => {
+                        let out = {
+                            let vs = items.borrow();
+                            if i < 0 || i as usize >= vs.len() {
+                                return Err(Error::runtime_at(
+                                    format!("array index {} out of range (len {})", i, vs.len()),
+                                    *span,
+                                ));
+                            }
+                            vs[i as usize].clone()
+                        };
+                        Ok(out)
+                    }
+                    other => Err(Error::runtime_at(
+                        format!("cannot index {} with `[i]`", other.ty()),
+                        *span,
+                    )),
                 }
             }
             Expr::BlockExpr(b, span) => flow_to_value(self.exec_block(b)?, *span),
@@ -445,10 +515,37 @@ fn eval_builtin(name: &str, args: &[Value]) -> Result<Option<Value>> {
         "sqrt" if args.len() == 1 => Value::F64(unary_f64(&args[0])?.sqrt()),
         "floor" if args.len() == 1 => Value::F64(unary_f64(&args[0])?.floor()),
         "ceil" if args.len() == 1 => Value::F64(unary_f64(&args[0])?.ceil()),
-        "len" if args.len() == 1 => Value::I64(args[0].as_str()?.chars().count() as i64),
-        "contains" if args.len() == 2 => {
-            Value::Bool(args[0].as_str()?.contains(args[1].as_str()?))
-        }
+        "len" if args.len() == 1 => match &args[0] {
+            Value::Str(s) => Value::I64(s.chars().count() as i64),
+            Value::Tuple(items) => Value::I64(items.len() as i64),
+            Value::Arr(items) => Value::I64(items.borrow().len() as i64),
+            v => {
+                let _ = v.as_str()?; // raise the usual "expected str" error shape
+                unreachable!()
+            }
+        },
+        "contains" if args.len() == 2 => match &args[0] {
+            Value::Str(s) => Value::Bool(s.contains(args[1].as_str()?)),
+            Value::Arr(items) => {
+                let items = items.borrow();
+                Value::Bool(items.iter().any(|e| e == &args[1]))
+            }
+            Value::Tuple(items) => Value::Bool(items.iter().any(|e| e == &args[1])),
+            v => {
+                let _ = v.as_str()?;
+                unreachable!()
+            }
+        },
+        "push" if args.len() == 2 => match &args[0] {
+            // In-place append on the shared payload (reference semantics).
+            Value::Arr(items) => {
+                items.borrow_mut().push(args[1].clone());
+                Value::Unit
+            }
+            v => {
+                return Err(Error::runtime(format!("push expects an array, found {}", v.ty())))
+            }
+        },
         "substr" if args.len() == 3 => {
             let s = args[0].as_str()?;
             let start = args[1].as_i64()?.max(0) as usize;
@@ -487,7 +584,9 @@ fn expr_span(e: &Expr) -> Span {
         | Expr::Binary { span: s, .. }
         | Expr::IfExpr { span: s, .. }
         | Expr::Tuple(_, s)
+        | Expr::Array(_, s)
         | Expr::Index { span: s, .. }
+        | Expr::DynIndex { span: s, .. }
         | Expr::BlockExpr(_, s) => *s,
     }
 }

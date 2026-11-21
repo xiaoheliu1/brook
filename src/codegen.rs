@@ -7,7 +7,7 @@
 //! the VM never hashes a name or inspects a runtime type tag on the hot path.
 
 use crate::ast::{
-    BinOp, Block, ElseBranch, Expr, FuncDecl, Program, Stmt, UnOp,
+    BinOp, Block, ElseBranch, Expr, ForIter, FuncDecl, Program, Stmt, UnOp,
 };
 use crate::error::{Error, Result};
 use crate::ir::{builtin, FuncId, Function, Instr, Op, Reg, Regs};
@@ -328,8 +328,8 @@ impl<'a> FuncCodegen<'a> {
                 self.compile_while(cond, body, *span)?;
                 Ok(Some(self.emit_const_unit(*span)))
             }
-            Stmt::For { var, start, end, body, span } => {
-                self.compile_for(var, start, end, body, *span)?;
+            Stmt::For { var, iter, body, span } => {
+                self.compile_for(var, iter, body, *span)?;
                 Ok(Some(self.emit_const_unit(*span)))
             }
             Stmt::Break { span } => {
@@ -425,45 +425,94 @@ impl<'a> FuncCodegen<'a> {
     fn compile_for(
         &mut self,
         var: &str,
-        start: &Expr,
-        end: &Expr,
+        iter: &ForIter,
         body: &Block,
         span: Span,
     ) -> Result<()> {
-        let (sr, _) = self.compile_expr(start)?;
-        let (er, _) = self.compile_expr(end)?;
-        let vr = self.fresh();
-        self.emit(Op::Mov { dst: vr, src: sr }, span);
+        match iter {
+            ForIter::Range { start, end } => {
+                let (sr, _) = self.compile_expr(start)?;
+                let (er, _) = self.compile_expr(end)?;
+                let vr = self.fresh();
+                self.emit(Op::Mov { dst: vr, src: sr }, span);
 
-        let loop_start = self.code.len();
-        // Jump when `!(vr < er)`, which is the loop's exit condition.
-        let jf = self.emit(Op::JmpIfGeI64 { a: vr, b: er, target: usize::MAX }, span);
+                let loop_start = self.code.len();
+                // Jump when `!(vr < er)`, which is the loop's exit condition.
+                let jf = self.emit(Op::JmpIfGeI64 { a: vr, b: er, target: usize::MAX }, span);
 
-        self.env.push(HashMap::new());
-        self.bind(var, vr, Ty::I64);
-        self.loops.push(LoopCtx::default());
-        self.compile_block(body)?;
-        let ctx = self.loops.pop().unwrap_or_default();
-        self.env.pop();
+                self.env.push(HashMap::new());
+                self.bind(var, vr, Ty::I64);
+                self.loops.push(LoopCtx::default());
+                self.compile_block(body)?;
+                let ctx = self.loops.pop().unwrap_or_default();
+                self.env.pop();
 
-        // `continue` must still run the increment, otherwise the loop spins
-        // forever on the same index. So it lands *before* the increment, not
-        // on the loop head.
-        let step = self.code.len();
-        for j in ctx.continues {
-            self.patch_jump(j, step);
+                // `continue` must still run the increment, otherwise the loop spins
+                // forever on the same index. So it lands *before* the increment, not
+                // on the loop head.
+                let step = self.code.len();
+                for j in ctx.continues {
+                    self.patch_jump(j, step);
+                }
+
+                // Single-instruction increment instead of `const 1; add; mov`.
+                self.emit(Op::AddI64Imm { dst: vr, src: vr, imm: 1 }, span);
+                self.emit(Op::Jump { target: loop_start }, span);
+
+                let end = self.code.len();
+                self.patch_jump(jf, end);
+                for j in ctx.breaks {
+                    self.patch_jump(j, end);
+                }
+                Ok(())
+            }
+            ForIter::List(arr_expr) => {
+                // ADR-018: desugar to an index walk over the array. The loop
+                // reads `len` and the element fresh every iteration, so a
+                // `push` inside the body extends the walk — same observable
+                // behaviour as Python's `for x in list`.
+                let (arr, arr_ty) = self.compile_expr(arr_expr)?;
+                let elem_ty = match &arr_ty {
+                    Ty::Arr(t) => (**t).clone(),
+                    // The checker guarantees an array here; the placeholder
+                    // only keeps the env typing well-formed.
+                    _ => Ty::Unit,
+                };
+
+                let idx = self.fresh();
+                self.emit(Op::ConstI64 { dst: idx, val: 0 }, span);
+                let len = self.fresh();
+                let vr = self.fresh();
+
+                let loop_start = self.code.len();
+                self.emit(Op::ArrLen { dst: len, src: arr }, span);
+                let jf = self.emit(Op::JmpIfGeI64 { a: idx, b: len, target: usize::MAX }, span);
+                self.emit(Op::ArrGet { dst: vr, base: arr, idx }, span);
+
+                self.env.push(HashMap::new());
+                self.bind(var, vr, elem_ty);
+                self.loops.push(LoopCtx::default());
+                self.compile_block(body)?;
+                let ctx = self.loops.pop().unwrap_or_default();
+                self.env.pop();
+
+                // `continue` re-enters before the increment, mirroring the
+                // range form.
+                let step = self.code.len();
+                for j in ctx.continues {
+                    self.patch_jump(j, step);
+                }
+                self.emit(Op::AddI64Imm { dst: idx, src: idx, imm: 1 }, span);
+                self.emit(Op::Jump { target: loop_start }, span);
+
+                let end = self.code.len();
+                self.patch_jump(jf, end);
+                for j in ctx.breaks {
+                    self.patch_jump(j, end);
+                }
+                Ok(())
+            }
         }
-
-        // Single-instruction increment instead of `const 1; add; mov`.
-        self.emit(Op::AddI64Imm { dst: vr, src: vr, imm: 1 }, span);
-        self.emit(Op::Jump { target: loop_start }, span);
-
-        let end = self.code.len();
-        self.patch_jump(jf, end);
-        for j in ctx.breaks {
-            self.patch_jump(j, end);
-        }
-        Ok(())
     }
 
     // ---- expressions ----
@@ -598,6 +647,32 @@ impl<'a> FuncCodegen<'a> {
                 };
                 let dst = self.fresh();
                 self.emit(Op::GetTuple { dst, base: br, index: *index }, *span);
+                Ok((dst, elem_ty))
+            }
+            Expr::Array(items, span) => {
+                // NewArr + per-element push: no inline operand-count limit,
+                // and the empty `[]` case is the same two instructions.
+                let dst = self.fresh();
+                self.emit(Op::NewArr { dst }, *span);
+                let mut elem_ty = Ty::Unit;
+                for (i, it) in items.iter().enumerate() {
+                    let (r, t) = self.compile_expr(it)?;
+                    self.emit(Op::ArrPush { arr: dst, src: r }, *span);
+                    if i == 0 {
+                        elem_ty = t;
+                    }
+                }
+                Ok((dst, Ty::Arr(Box::new(elem_ty))))
+            }
+            Expr::DynIndex { base, index, span } => {
+                let (br, bt) = self.compile_expr(base)?;
+                let (ir, _) = self.compile_expr(index)?;
+                let elem_ty = match bt {
+                    Ty::Arr(t) => (*t).clone(),
+                    _ => Ty::Unit,
+                };
+                let dst = self.fresh();
+                self.emit(Op::ArrGet { dst, base: br, idx: ir }, *span);
                 Ok((dst, elem_ty))
             }
             Expr::BlockExpr(block, _) => self.compile_block(block),

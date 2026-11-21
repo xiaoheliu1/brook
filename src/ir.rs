@@ -199,6 +199,18 @@ pub enum Op {
     MakeTuple { dst: Reg, elems: Regs },
     GetTuple { dst: Reg, base: Reg, index: usize },
 
+    // ---- arrays (ADR-018; reference semantics via shared heap entries) ----
+    /// Allocate an empty array heap entry.
+    NewArr { dst: Reg },
+    /// Append `src` to the array in `arr` (in-place heap mutation; quota is
+    /// charged per element). Used for literal construction; scripts call the
+    /// `push` builtin, which routes through the same heap helper.
+    ArrPush { arr: Reg, src: Reg },
+    /// Element count into `dst` (loop bounds use it fused with `JmpIfGeI64`).
+    ArrLen { dst: Reg, src: Reg },
+    /// `dst = arr[idx]`, bounds-checked.
+    ArrGet { dst: Reg, base: Reg, idx: Reg },
+
     // ---- return ----
     Ret { src: Reg },
 }
@@ -258,6 +270,8 @@ pub mod builtin {
     pub const ABS_I64: u8 = 16;
     pub const MIN_I64: u8 = 17;
     pub const MAX_I64: u8 = 18;
+    /// `push(arr, v)` — the one side-effecting builtin (ADR-018).
+    pub const PUSH: u8 = 19;
 
     /// Choose the type-specialized string conversion opcode.
     pub fn to_str_id(ty: &crate::ty::Ty) -> u8 {
@@ -301,6 +315,7 @@ pub mod builtin {
             "to_i64" => TO_I64,
             "to_f64" => TO_F64,
             "to_str" => TO_STR_I64, // refined by codegen via to_str_id
+            "push" => PUSH,
             _ => return None,
         })
     }
@@ -323,6 +338,7 @@ pub mod builtin {
             ABS_I64 => "abs",
             MIN_I64 => "min",
             MAX_I64 => "max",
+            PUSH => "push",
             _ => "?builtin",
         }
     }

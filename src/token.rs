@@ -50,6 +50,8 @@ pub enum TokenKind {
     Comma,
     Dot,      // . and tuple access .0
     DotDot,   // ..
+    LBracket, // [ array literal / indexing / type annotation [T]
+    RBracket,
     Colon,    // : for optional type annotation
     Arrow,    // -> for return type
 

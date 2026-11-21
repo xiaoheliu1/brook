@@ -262,6 +262,16 @@ impl Parser {
                 self.expect(TokenKind::RParen)?;
                 Ok(Ty::Tuple(tys))
             }
+            TokenKind::LBracket => {
+                // `[T]` array annotation (ADR-018): `let fails: [str] = []`,
+                // params `rows: [(str, str, bool, i64)]`, return types.
+                self.bump();
+                self.eat_newlines();
+                let elem = self.parse_type()?;
+                self.eat_newlines();
+                self.expect(TokenKind::RBracket)?;
+                Ok(Ty::Arr(Box::new(elem)))
+            }
             _ => Err(Error::parse(format!("expected type, found {:?}", self.peek()), self.peek_span())),
         }
     }
@@ -332,13 +342,22 @@ impl Parser {
                 self.bump();
                 let (var, _) = self.expect_ident()?;
                 self.expect(TokenKind::In)?;
-                let start = self.parse_expr_bp(0)?;
-                self.expect(TokenKind::DotDot)?;
-                let end = self.parse_expr()?;
+                // `for i in 0..n` (range) vs `for r in rows` (array,
+                // ADR-018): the first expression is parsed normally — a
+                // range's start stops at the DotDot token, which no binary
+                // operator claims — and the presence of `..` picks the form.
+                let first = self.parse_expr_bp(0)?;
+                let iter = if self.check(&TokenKind::DotDot) {
+                    self.bump();
+                    let end = self.parse_expr()?;
+                    ForIter::Range { start: first, end }
+                } else {
+                    ForIter::List(first)
+                };
                 self.eat_newlines();
                 let body = self.parse_block()?;
                 let bend = body.span;
-                Ok(Stmt::For { var, start, end, body, span: span.to(bend) })
+                Ok(Stmt::For { var, iter, body, span: span.to(bend) })
             }
             TokenKind::Ident(_) if self.is_assignment_ahead() => {
                 let (name, _) = self.expect_ident()?;
@@ -490,6 +509,16 @@ impl Parser {
                 self.bump();
                 let span = expr_span(&e).to(idx_span);
                 e = Expr::Index { base: Box::new(e), index: idx, span };
+            } else if self.check(&TokenKind::LBracket) {
+                // Array indexing `rows[i]` (ADR-018). Chained like `.n`
+                // postfix: `rows[i][j]` indexes the (nested) result again.
+                self.bump();
+                self.eat_newlines();
+                let idx = self.parse_expr()?;
+                self.eat_newlines();
+                let close = self.expect(TokenKind::RBracket)?.span;
+                let span = expr_span(&e).to(close);
+                e = Expr::DynIndex { base: Box::new(e), index: Box::new(idx), span };
             } else {
                 break;
             }
@@ -598,6 +627,32 @@ impl Parser {
                 let s = b.span;
                 Ok(Expr::BlockExpr(b, s))
             }
+            TokenKind::LBracket => {
+                // Array literal (ADR-018). Same comma/newline handling as the
+                // tuple literal; empty `[]` infers its element type later.
+                self.bump();
+                self.eat_newlines();
+                if self.check(&TokenKind::RBracket) {
+                    let close = self.bump().span;
+                    return Ok(Expr::Array(Vec::new(), span.to(close)));
+                }
+                let mut items = Vec::new();
+                loop {
+                    items.push(self.parse_expr()?);
+                    self.eat_newlines();
+                    if self.check(&TokenKind::Comma) {
+                        self.bump();
+                        self.eat_newlines();
+                        if self.check(&TokenKind::RBracket) {
+                            break; // trailing comma
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                let close = self.expect(TokenKind::RBracket)?.span;
+                Ok(Expr::Array(items, span.to(close)))
+            }
             _ => Err(Error::parse(format!("unexpected token {:?} in expression", self.peek()), span)),
         }
     }
@@ -621,7 +676,9 @@ fn expr_span(e: &Expr) -> Span {
         | Expr::Binary { span: s, .. }
         | Expr::IfExpr { span: s, .. }
         | Expr::Tuple(_, s)
+        | Expr::Array(_, s)
         | Expr::Index { span: s, .. }
+        | Expr::DynIndex { span: s, .. }
         | Expr::BlockExpr(_, s) => *s,
     }
 }

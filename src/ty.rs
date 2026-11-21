@@ -14,6 +14,12 @@ pub enum Ty {
     /// Opaque host handle, identified by the Rust type's name.
     Handle(String),
     Tuple(Vec<Ty>),
+    /// Homogeneous array (ADR-018). Element type is a single compile-time
+    /// type — an array of tuples is `Arr(Tuple([..]))`, which is what lets
+    /// host functions hand over record lists (`fs_list` 等) with full
+    /// static typing. Reference semantics live in the runtime representation,
+    /// not here: assignment and argument passing alias the same array.
+    Arr(Box<Ty>),
     /// Inference variable. Never escapes a successful typecheck.
     Var(usize),
     /// The unit value (empty tuple / no value).
@@ -37,6 +43,7 @@ impl Ty {
                 let inner = ts.iter().map(|t| t.render()).collect::<Vec<_>>().join(", ");
                 format!("({})", inner)
             }
+            Ty::Arr(t) => format!("[{}]", t.render()),
             Ty::Var(id) => format!("?{}", id),
             Ty::Unit => "()".into(),
         }

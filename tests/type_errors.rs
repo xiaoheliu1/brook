@@ -77,9 +77,12 @@ func f() { g("a") }
 
 #[test]
 fn builtin_arguments_report_expected_first() {
+    // `len` is polymorphic since ADR-018 (str / tuple / array), so the old
+    // `expected str, found i64` wording became `len expects …, found i64` —
+    // same direction convention: the acceptable types come first.
     let msg = type_err(r#"func f() { len(1) }"#);
-    assert!(msg.contains("len"), "got: {}", msg);
-    assert_mismatch(&msg, "str", "i64");
+    assert!(msg.contains("len expects"), "got: {}", msg);
+    assert!(msg.contains("found i64"), "got: {}", msg);
 
     let msg2 = type_err(r#"func f() { to_i64(true) }"#);
     assert!(msg2.contains("to_i64"), "got: {}", msg2);

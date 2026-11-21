@@ -517,6 +517,11 @@ fn type_matches(v: &Value, ty: &Ty) -> bool {
             // elements match. Excess elements are harmless for `.N` access.
             vals.len() >= tys.len() && vals.iter().zip(tys).all(|(x, t)| type_matches(x, t))
         }
+        (Value::Arr(items), Ty::Arr(t)) => {
+            // Homogeneous arrays (ADR-018): every element must match. Empty
+            // arrays trivially satisfy any element type.
+            items.borrow().iter().all(|x| type_matches(x, t))
+        }
         // A defaulted inference variable becomes I64; accept any scalar there
         // only if it round-trips (keeps host-called polymorphic funcs usable).
         (_, Ty::Var(_)) => true,

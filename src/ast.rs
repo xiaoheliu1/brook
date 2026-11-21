@@ -62,8 +62,7 @@ pub enum Stmt {
     While { cond: Expr, body: Block, span: Span },
     For {
         var: String,
-        start: Expr,
-        end: Expr,
+        iter: ForIter,
         body: Block,
         span: Span,
     },
@@ -77,6 +76,15 @@ pub enum Stmt {
 pub enum ElseBranch {
     Block(Block),
     ElseIf(Stmt),
+}
+
+/// What a `for` loop walks (ADR-018): a half-open integer range, or an
+/// array. The parser decides from the presence of `..` after the first
+/// expression; the type checker pins the variant to a type.
+#[derive(Debug, Clone)]
+pub enum ForIter {
+    Range { start: Expr, end: Expr },
+    List(Expr),
 }
 
 #[derive(Debug, Clone)]
@@ -99,8 +107,14 @@ pub enum Expr {
     /// A block used as an expression; its value is the last statement's value.
     BlockExpr(Block, Span),
     Tuple(Vec<Expr>, Span),
+    /// Array literal `[a, b, c]` (ADR-018). Empty `[]` infers its element
+    /// type from usage (first `push`, annotation, or context).
+    Array(Vec<Expr>, Span),
     /// Tuple element access: `expr . 0`
     Index { base: Box<Expr>, index: usize, span: Span },
+    /// Array indexing: `expr[i]` with a runtime index. Tuples are indexed
+    /// with constant `.n` (see `Index`); this is the array counterpart.
+    DynIndex { base: Box<Expr>, index: Box<Expr>, span: Span },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

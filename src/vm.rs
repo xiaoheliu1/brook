@@ -60,11 +60,18 @@ impl Slot {
 }
 
 /// Heap-resident values. Strings from the constant pool are pre-interned;
-/// runtime strings (substr/to_str) and tuples are appended lazily.
+/// runtime strings (substr/to_str), tuples and arrays are appended lazily.
 enum HeapObj {
     Str(Rc<str>),
     Handle(Handle),
     Tuple(Vec<Slot>),
+    /// Arrays (ADR-018). Reference semantics fall out of the slot model:
+    /// copying a slot copies the heap *index*, so `let b = a` aliases the
+    /// same `Arr` entry and `ArrPush` mutates it in place — exactly the
+    /// Python-style behaviour the type checker promises. Cycles cannot be
+    /// constructed (`push(a, a)` is rejected by the occurs check), so entries
+    /// staying alive for the whole call is bounded by the gas/quota budget.
+    Arr(Vec<Slot>),
 }
 
 /// Every heap entry occupies a slot in `Vm::heap` even when its payload is
@@ -666,6 +673,48 @@ impl<'a> Vm<'a> {
                     self.regs[base + dst as usize] = item;
                 }
 
+                // ---- arrays (ADR-018) ----
+                Op::NewArr { dst } => {
+                    self.charge(0)?;
+                    let idx = self.heap.len();
+                    self.heap.push(HeapObj::Arr(Vec::new()));
+                    self.regs[base + dst as usize] = Slot::heap(idx);
+                }
+                Op::ArrPush { arr, src } => {
+                    let v = self.regs[base + src as usize];
+                    let a = self.regs[base + arr as usize].as_heap();
+                    self.array_push(a, v, instr.span())?;
+                }
+                Op::ArrLen { dst, src } => {
+                    let idx = self.regs[base + src as usize].as_heap();
+                    let n = match self.heap.get(idx) {
+                        Some(HeapObj::Arr(items)) => items.len(),
+                        _ => return Err(err_at("expected array in slot", instr.span())),
+                    };
+                    self.regs[base + dst as usize] = Slot::i64(n as i64);
+                }
+                Op::ArrGet { dst, base: arr, idx } => {
+                    let a = self.regs[base + arr as usize].as_heap();
+                    let i = self.regs[base + idx as usize].as_i64();
+                    let item = match self.heap.get(a) {
+                        Some(HeapObj::Arr(items)) => {
+                            if i < 0 || i as usize >= items.len() {
+                                return Err(err_at(
+                                    format!(
+                                        "array index {} out of range (len {})",
+                                        i,
+                                        items.len()
+                                    ),
+                                    instr.span(),
+                                ));
+                            }
+                            items[i as usize]
+                        }
+                        _ => return Err(err_at("expected array in slot", instr.span())),
+                    };
+                    self.regs[base + dst as usize] = item;
+                }
+
                 // ---- return ----
                 Op::Ret { src } => {
                     let v = self.regs[base + src as usize];
@@ -728,6 +777,43 @@ impl<'a> Vm<'a> {
         }
     }
 
+    /// Append one element to an array heap entry (checked before mutating).
+    /// Shared by `Op::ArrPush` and the `push` builtin.
+    fn array_push(&mut self, arr_idx: usize, v: Slot, span: Span) -> Result<()> {
+        if arr_idx >= self.heap.len() || !matches!(self.heap[arr_idx], HeapObj::Arr(_)) {
+            return Err(err_at("expected array in slot", span));
+        }
+        // Quota first: a hostile push loop must die before growing the heap.
+        self.charge(std::mem::size_of::<Slot>())?;
+        match &mut self.heap[arr_idx] {
+            HeapObj::Arr(items) => items.push(v),
+            _ => unreachable!("checked above"),
+        }
+        Ok(())
+    }
+
+    /// Structural equality of two slots (scalars by bit pattern, heap objects
+    /// by content). Powers `contains(arr, v)` for arrays. Depth is bounded by
+    /// the static type system: cyclic arrays are unconstructible (ADR-018).
+    fn slots_equal(&self, a: Slot, b: Slot) -> bool {
+        if a.0 == b.0 {
+            // Same bits: equal scalars, or literally the same heap index.
+            return true;
+        }
+        let (ha, hb) = (a.as_heap(), b.as_heap());
+        match (self.heap.get(ha), self.heap.get(hb)) {
+            (Some(HeapObj::Str(x)), Some(HeapObj::Str(y))) => x == y,
+            (Some(HeapObj::Handle(x)), Some(HeapObj::Handle(y))) => x == y,
+            (Some(HeapObj::Tuple(x)), Some(HeapObj::Tuple(y))) => {
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| self.slots_equal(*p, *q))
+            }
+            (Some(HeapObj::Arr(x)), Some(HeapObj::Arr(y))) => {
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| self.slots_equal(*p, *q))
+            }
+            _ => false,
+        }
+    }
+
     /// Object identity for opaque handles: `Handle`'s `PartialEq` compares
     /// the payload's `Rc` pointer (plus the registered type name), so two
     /// heap entries holding clones of the same host object compare equal
@@ -773,6 +859,23 @@ impl<'a> Vm<'a> {
                 self.heap.push(HeapObj::Tuple(items));
                 Ok(Slot::heap(idx))
             }
+            (Value::Arr(vals), _) => {
+                // Clone (not take): the Rc payload may be shared with other
+                // Values the host still holds; taking would empty them.
+                let vals = vals.borrow().clone();
+                self.charge(vals.len() * std::mem::size_of::<Slot>())?;
+                let elem_ty = match ty {
+                    Ty::Arr(t) => (**t).clone(),
+                    _ => Ty::Unit,
+                };
+                let mut items = Vec::with_capacity(vals.len());
+                for val in vals {
+                    items.push(self.value_to_slot(val, &elem_ty)?);
+                }
+                let idx = self.heap.len();
+                self.heap.push(HeapObj::Arr(items));
+                Ok(Slot::heap(idx))
+            }
             (Value::Unit, _) => Ok(Slot(0)),
         }
     }
@@ -801,6 +904,16 @@ impl<'a> Vm<'a> {
                     Ok(Value::Tuple(vals))
                 }
                 _ => Err(Error::runtime("expected tuple in slot")),
+            },
+            Ty::Arr(t) => match self.heap.get(slot.as_heap()) {
+                Some(HeapObj::Arr(items)) => {
+                    let mut vals = Vec::with_capacity(items.len());
+                    for item in items {
+                        vals.push(self.slot_to_value(*item, t)?);
+                    }
+                    Ok(Value::Arr(Rc::new(std::cell::RefCell::new(vals))))
+                }
+                _ => Err(Error::runtime("expected array in slot")),
             },
             Ty::Var(_) => Ok(Value::I64(slot.as_i64())),
         }
@@ -865,16 +978,38 @@ impl<'a> Vm<'a> {
                 if n != 1 {
                     return Err(err_at("builtin arity", span));
                 }
-                let s = self.heap_str(self.regs[at(0)].as_heap(), span)?;
-                Ok(Slot::i64(s.chars().count() as i64))
+                // Polymorphic since ADR-018: str (chars) / tuple / array
+                // (elements). The checker restricts calls to these three.
+                let idx = self.regs[at(0)].as_heap();
+                let r = match self.heap.get(idx) {
+                    Some(HeapObj::Str(s)) => s.chars().count(),
+                    Some(HeapObj::Tuple(items)) => items.len(),
+                    Some(HeapObj::Arr(items)) => items.len(),
+                    _ => return Err(err_at("len expects a str, tuple or array", span)),
+                };
+                Ok(Slot::i64(r as i64))
             }
             CONTAINS => {
                 if n != 2 {
                     return Err(err_at("builtin arity", span));
                 }
-                let a = self.heap_str(self.regs[at(0)].as_heap(), span)?.to_string();
-                let b = self.heap_str(self.regs[at(1)].as_heap(), span)?.to_string();
-                Ok(Slot(if a.contains(&b) { 1 } else { 0 }))
+                let hay_idx = self.regs[at(0)].as_heap();
+                let needle = self.regs[at(1)];
+                match self.heap.get(hay_idx) {
+                    // String: substring containment.
+                    Some(HeapObj::Str(s)) => {
+                        let b = self.heap_str(self.regs[at(1)].as_heap(), span)?.to_string();
+                        Ok(Slot(if s.contains(&b) { 1 } else { 0 }))
+                    }
+                    // Array/tuple: element scan with structural equality.
+                    Some(HeapObj::Arr(items)) => Ok(Slot(
+                        if items.iter().any(|e| self.slots_equal(*e, needle)) { 1 } else { 0 },
+                    )),
+                    Some(HeapObj::Tuple(items)) => Ok(Slot(
+                        if items.iter().any(|e| self.slots_equal(*e, needle)) { 1 } else { 0 },
+                    )),
+                    _ => Err(err_at("contains expects a str or array", span)),
+                }
             }
             SUBSTR => {
                 if n != 3 {
@@ -914,6 +1049,15 @@ impl<'a> Vm<'a> {
                 self.intern_runtime_str(s)
             }
             TO_STR_STR => Ok(self.regs[at(0)]),
+            PUSH => {
+                if n != 2 {
+                    return Err(err_at("builtin arity", span));
+                }
+                let v = self.regs[at(1)];
+                let a = self.regs[at(0)].as_heap();
+                self.array_push(a, v, span)?;
+                Ok(Slot(0)) // unit result; `push` is a statement in practice
+            }
             _ => Err(err_at("unknown builtin", span)),
         }
     }

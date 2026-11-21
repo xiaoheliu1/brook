@@ -189,13 +189,13 @@ impl<T: HostResult> HostResult for std::result::Result<T, Error> {
     fn into_value(self) -> Result<Value> { self?.into_value() }
 }
 
-// Fixed-arity tuples are the script's multi-value type. Variable-length `Vec`
-// is deliberately not supported: a host signature must have a static shape.
-// Arity 2 was the original limit (ADR-013 recorded "host tuples stop at 2,
-// use Opaque beyond that"); that was a bridging-layer gap, not a language one
-// — the script language itself accepts tuples up to MAX_OPERANDS — so the
-// bridge now covers 2–8. Collections of unknown length (record lists) still
-// belong in `Opaque<T>` + indexed getters.
+// Fixed-arity tuples are the script's multi-value type. Arity 2 was the
+// original limit (ADR-013 recorded "host tuples stop at 2, use Opaque beyond
+// that"); that was a bridging-layer gap, not a language one — the script
+// language itself accepts tuples up to MAX_OPERANDS — so the bridge now
+// covers 2–8. Variable-length collections crossed the boundary as `Opaque<T>`
+// + getters until arrays entered the language (ADR-018): `Vec<T>` below is
+// now the native bridge for record lists (`fs_list` 等).
 macro_rules! impl_tuple_n {
     ($n:literal; $($idx:tt => $T:ident),+ $(,)?) => {
         impl<$($T: ScriptType),+> ScriptType for ($($T,)+) {
@@ -234,6 +234,43 @@ impl_tuple_n!(5; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E);
 impl_tuple_n!(6; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E, 5 => F);
 impl_tuple_n!(7; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E, 5 => F, 6 => G);
 impl_tuple_n!(8; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E, 5 => F, 6 => G, 7 => H);
+
+/// Arrays (ADR-018): a host function may return `Vec<T>` — the signature the
+/// checker sees is `[T]`, and the elements arrive as a fresh array — or take
+/// `Vec<T>` parameters, which clone elements out of the script's array
+/// (a snapshot: later script-side `push` does not affect the host's copy).
+impl<T: ScriptType> ScriptType for Vec<T> {
+    fn script_ty() -> Ty {
+        Ty::Arr(Box::new(T::script_ty()))
+    }
+}
+impl<T: FromValue> FromValue for Vec<T> {
+    fn from_value(v: &Value) -> Result<Self> {
+        match v {
+            Value::Arr(items) => {
+                let items = items.borrow();
+                let mut out = Vec::with_capacity(items.len());
+                for item in items.iter() {
+                    out.push(T::from_value(item)?);
+                }
+                Ok(out)
+            }
+            _ => Err(Error::runtime(format!("expected array, found {}", v.ty()))),
+        }
+    }
+}
+impl<T: HostResult> HostResult for Vec<T> {
+    fn script_ty() -> Ty {
+        Ty::Arr(Box::new(T::script_ty()))
+    }
+    fn into_value(self) -> Result<Value> {
+        let mut items = Vec::with_capacity(self.len());
+        for t in self {
+            items.push(t.into_value()?);
+        }
+        Ok(Value::Arr(Rc::new(std::cell::RefCell::new(items))))
+    }
+}
 
 /// Register a host function with a Rust-typed signature.
 ///

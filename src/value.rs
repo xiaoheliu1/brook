@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::ty::Ty;
+use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
@@ -49,12 +50,33 @@ pub enum Value {
     Str(Rc<str>),
     Handle(Handle),
     Tuple(Vec<Value>),
+    /// Array (ADR-018). Shared via `Rc` so that the reference interpreter's
+    /// `let b = a` behaves exactly like the bytecode VM's slot copy: both are
+    /// aliases of the same array (Python-style reference semantics). Cycles
+    /// are unconstructible (`push(a, a)` is an infinite type), so no GC.
+    /// The host boundary treats an array as a snapshot: `FromValue for
+    /// Vec<T>` clones elements out, and host-returned `Vec<T>` arrives as a
+    /// fresh array.
+    Arr(Rc<RefCell<Vec<Value>>>),
     Unit,
 }
 
 impl Value {
     pub fn handle<T: 'static>(value: T) -> Self {
         Value::Handle(Handle::new(value))
+    }
+
+    /// Build an array value from Rust elements (host side).
+    pub fn arr(items: Vec<Value>) -> Self {
+        Value::Arr(Rc::new(RefCell::new(items)))
+    }
+
+    /// Borrow the array payload, or `Err` for non-array values.
+    pub fn as_array(&self) -> Result<std::cell::Ref<'_, Vec<Value>>> {
+        match self {
+            Value::Arr(items) => Ok(items.borrow()),
+            _ => Err(Error::runtime(format!("expected array, found {}", self.ty()))),
+        }
     }
 
     pub fn ty(&self) -> Ty {
@@ -65,6 +87,13 @@ impl Value {
             Value::Str(_) => Ty::Str,
             Value::Handle(h) => Ty::Handle(h.type_name.clone()),
             Value::Tuple(v) => Ty::Tuple(v.iter().map(|x| x.ty()).collect()),
+            // Empty arrays have no element to read; `Unit` renders as the
+            // placeholder for diagnostics only (the static checker always
+            // knows the real element type).
+            Value::Arr(v) => {
+                let elem = v.borrow().first().map(|x| x.ty()).unwrap_or(Ty::Unit);
+                Ty::Arr(Box::new(elem))
+            }
             Value::Unit => Ty::Unit,
         }
     }
@@ -123,6 +152,10 @@ impl fmt::Display for Value {
             Value::Tuple(v) => {
                 let parts: Vec<_> = v.iter().map(|x| x.to_string()).collect();
                 write!(f, "({})", parts.join(", "))
+            }
+            Value::Arr(v) => {
+                let parts: Vec<_> = v.borrow().iter().map(|x| x.to_string()).collect();
+                write!(f, "[{}]", parts.join(", "))
             }
             Value::Unit => write!(f, "()"),
         }

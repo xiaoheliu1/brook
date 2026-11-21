@@ -9,7 +9,7 @@
 > - 时间线倒序追加（新的记录放最上面）。
 
 **创建日期**：2026-11-20
-**当前状态**：阶段 3 功能全部落地（安全边界、`register_fn!` 类型化 FFI、C ABI / JNI 双 ABI 打包、`.sbc` 字节码缓存）。真机验证已于 2026-11-21 在 PLR110（Android 16 / arm64-v8a / SELinux Enforcing）完成（见 Q10 / D-032），产物已完成交叉编译 + ELF/导出符号校验。测试演进：自查修复后 64 项 → 迁移可行性验证后 65 项 → 补 `break` / `continue` 后 77 项 → 补 `/* */` 块注释与类型错误信息方向统一后 107 项 → 补诊断能力（字符列号 / 调用栈 / 源码片段渲染 / 宿主错误类型透传）后 118 项 → 补嵌套深度上限（修栈溢出崩溃）后 126 项 → 补数值内置 i64、C ABI 错误定位、线程/重载语义后 149 项（147 项单测/集成 + 2 个 doctest，另有 1 个 `ignore` 示例），release 构建通过；2026-11-21 静态审查修复两处 P1（if 表达式 else-if 深度守卫、EqHandle 对象身份语义）并解决 Q13/Q14（参考解释器对齐 VM、块值类型统一、validate 硬化），累计新增 10 项回归，**159 项全绿**（157 单测/集成 + 2 doctest + 1 ignore 示例）、release 构建零警告（shell 恢复后实测）；2026-11-21 C ABI 句柄式脚本层落地（ADR-015 / D-033）；同日解决 Q15 + fuzz 冒烟（D-034）、完成 rhai_demo/so_demo 迁移评估与 so_demo 改写 POC（D-035）；同日教程重构为纯脚本教程 + 宿主指南（D-038）、显式化 ADR-016（顶层函数式）并新增公共函数库模式（D-037），实测 **205 项全绿、零警告**
+**当前状态**：阶段 3 功能全部落地（安全边界、`register_fn!` 类型化 FFI、C ABI / JNI 双 ABI 打包、`.sbc` 字节码缓存）。真机验证已于 2026-11-21 在 PLR110（Android 16 / arm64-v8a / SELinux Enforcing）完成（见 Q10 / D-032），产物已完成交叉编译 + ELF/导出符号校验。测试演进：自查修复后 64 项 → 迁移可行性验证后 65 项 → 补 `break` / `continue` 后 77 项 → 补 `/* */` 块注释与类型错误信息方向统一后 107 项 → 补诊断能力（字符列号 / 调用栈 / 源码片段渲染 / 宿主错误类型透传）后 118 项 → 补嵌套深度上限（修栈溢出崩溃）后 126 项 → 补数值内置 i64、C ABI 错误定位、线程/重载语义后 149 项（147 项单测/集成 + 2 个 doctest，另有 1 个 `ignore` 示例），release 构建通过；2026-11-21 静态审查修复两处 P1（if 表达式 else-if 深度守卫、EqHandle 对象身份语义）并解决 Q13/Q14（参考解释器对齐 VM、块值类型统一、validate 硬化），累计新增 10 项回归，**159 项全绿**（157 单测/集成 + 2 doctest + 1 ignore 示例）、release 构建零警告（shell 恢复后实测）；2026-11-21 C ABI 句柄式脚本层落地（ADR-015 / D-033）；同日解决 Q15 + fuzz 冒烟（D-034）、完成 rhai_demo/so_demo 迁移评估与 so_demo 改写 POC（D-035）；同日教程重构为纯脚本教程 + 宿主指南（D-038）、显式化 ADR-016（顶层函数式）并新增公共函数库模式（D-037）；同日 import 加固三线（D-044）；**数组进入语言（ADR-018 / D-045，Q16）**——Python 式引用语义、`for x in arr`、push/len/contains、宿主 `Vec<T>` 边界、Map 暂缓（重启条件见 ADR-018），`.sbc` VERSION 4→5，实测 **240 项全绿、release 零警告**、基线无回退
 **项目代号**：`brook`（crate 名，已落地。名字为用户昵称「小河」的英译。曾用名链：`miniscript` → `vitul` → `brook`，见 D-040 / D-043）
 
 ---
@@ -132,10 +132,11 @@ Rust 宿主应用
 | 多返回值 | 元组 `(T1, T2)`，用 `.0` `.1` 取值 |
 | 多类型返回 | **不支持**（union 撕裂静态检查）；用「元组 + 标志位」代替 |
 | 返回类型标注 | 可选：想写就写（当文档+校验），懒得写就省略 |
-| 类型种类 | `i64` / `f64` / `bool` / `str` / 句柄 / 元组（共 6 种） |
+| 类型种类 | `i64` / `f64` / `bool` / `str` / 句柄 / 元组 / 数组 `[T]`（共 7 种，数组见 ADR-018） |
+| 数组 | `[1, 2, 3]` 字面量、`arr[i]` 下标访问、`for x in arr` 遍历、`push(arr, v)` / `len(arr)` / `contains(arr, v)`；**引用语义**（赋值/传参是别名，Python 式）；元素类型编译期唯一（同构），元素可为任意类型含元组 |
+| 控制流 | `if / else`、`while`、`for i in 0..n`（range）与 `for x in arr`（数组遍历）、`break` / `continue` |
 | 末位表达式 | 即返回值；也支持显式 `return` 提前退出 |
 | 运算符 | `+ - * / %`；`== != < <= > >=`；`&& || !` |
-| 控制流 | `if / else`、`while`、`for i in 0..n`、`break` / `continue` |
 | 注释 | `// 行注释`、`/* 块注释 */`（C 风格，不嵌套；跨行块注释等价于一个换行） |
 | 函数 | 支持递归、调用宿主注册函数 |
 
@@ -184,7 +185,8 @@ func check(order, limit) {
 | 类别 | 函数 |
 |---|---|
 | 数学 | `abs` `min` `max` `sqrt` `floor` `ceil` `pow` |
-| 字符串 | `len` `contains` `substr` |
+| 字符串 | `len` `contains` `substr`（`len`/`contains` 同时支持数组：`len(arr)` 元素数、`contains(arr, v)` 元素查找） |
+| 数组 | `push(arr, v)` 追加元素（**原地修改**，返回 `()`；白名单里唯一的副作用函数，见 ADR-018） |
 | 转换 | `to_i64` `to_f64` `to_str`（`to_str` 仅支持 i64 / f64 / bool / str） |
 
 **没有** print、文件、网络、时间、随机数。脚本做任何事必须通过宿主注册函数——既是安全边界，也保证确定性可复现。
@@ -253,8 +255,9 @@ call       := ident "(" (expr ("," expr)*)? ")"
 | 表达式 | 算术、比较、逻辑、let / 赋值 | v1 核心 |
 | 控制流 | if/else、while、for range、break/continue | v1 核心 |
 | 函数 | 定义、调用、递归、return、元组返回 | v1 核心 |
-| 宿主互操作 | 注册函数直调、不透明句柄、类型编译期校验 | v1 核心 |
-| 扩展 | 数组、字典、字符串插值 | v2（含分配开销） |
+| 集合 | 数组 `[T]`：字面量 / 下标 / for-in / push / len / contains，引用语义（ADR-018） | v1.2 |
+| 宿主互操作 | 注册函数直调、不透明句柄、类型编译期校验、`Vec<T>` 边界往返 | v1 核心 |
+| 扩展 | 字典（Map，暂缓——重启条件见 ADR-018）、字符串插值、下标赋值 | v2（含分配开销） |
 | 模块复用 | `import "名字"` 约定式合并（无命名空间，见 ADR-017） | v1.1 |
 | 永久不支持 | 动态类型、闭包、类/继承、异常、命名空间模块、运行时链接、并发、eval、union 类型 | — |
 
@@ -378,10 +381,26 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 ### ADR-004 · 不支持 union / 可选值，多返回用元组
 - **日期**：2026-11-20
-- **状态**：已确定
+- **状态**：已确定（数组部分 2026-11-21 由 ADR-018 修订）
 - **决策**：不支持同一位置返回不同类型；多结果用「元组 + 标志位」表达；不引入 `T?` 可选类型
 - **理由**：union 撕裂静态类型检查，损害性能与安全；可选值是额外概念，与极简目标冲突
-- **影响**：类型系统固定为 6 种；标准库函数（如 `parse`）需返回 `(f64, bool)` 形态
+- **影响**：类型系统固定为 6 种；标准库函数（如 `parse`）需返回 `(f64, bool)` 形态。~~6 种~~ → 7 种（+数组），见 ADR-018
+
+### ADR-018 · 数组进入语言（ADR-004 修订）：Python 式引用语义，Map 暂缓
+- **日期**：2026-11-21
+- **状态**：已确定（D-045 实施）
+- **决策**：
+  1. **数组 `[T]` 进入语言**：同构数组（元素类型编译期唯一），元素可以是任何类型**含元组**——`[(str, str, bool, i64)]` 覆盖「数组 of 记录」
+  2. **引用语义（Python 式）**：`let b = a` 后 `b` 与 `a` 是同一数组（别名）；函数传参传引用，被调函数内 `push` 对调用者可见
+  3. **Map 暂缓**：不是永久拒绝。重启条件写死：① 出现动态键查表真实调用点（`config[用户输入的键]`）；② 记录字段 > 8（元组装不下）；③ 需要键的动态枚举。当前两宿主全量盘点 = 零调用点
+- **理由（推翻 ADR-004 原否决的三条证据）**：
+  1. **证据**：so_demo 50 脚本（fails/skipped/used/visible/hits 全是 push 积累）+ rhai_demo browser_task_archive（9 个数组变量、`for r in rows` 200 行迭代）——集合操作是脚本的主流形态而非边缘用法；没有数组每一处都要 Opaque+getter / 字符串拼接 / 拆变量，**每个变通的复杂度超过数组特性本身**（D-035 POC 实测）
+  2. **GC 障碍消失了**：ADR-004 当年否决的核心技术假设是「引用语义 → 循环引用 → 必须 GC」。本语言**没有闭包、没有引用类型**，循环引用**不可构造**（`push(a, a)` 被类型系统 occurs 检查拒绝——`e == Arr(e)` 是 infinite type）→ 无泄漏 → 不需要 GC → 引用语义 sound
+  3. **VM 堆索引模型让引用语义几乎免费**：槽位本来存堆索引，`Mov` 拷贝槽位 = 同一堆对象别名 = 天然 Python 语义；`push` 原地改堆对象即可。参考解释器用 `Value::Arr(Rc<RefCell<Vec<Value>>>)` 对齐同一语义
+- **为什么是「数组先、Map 缓」**：rhai 的 Map 无处不在是因为 rhai **没有元组**——Map 是 rhai 对「结构化记录」的替代品。盘点 browser_task_archive 全部 Map 用法：`no_hit()` 占位、`pick_css`/`download_css` 返回值、`r["target_id"]` 字段访问——**全部是固定字段记录，键全是字面量**，元组 + 元组数组 100% 覆盖。真正的动态键关联容器调用点为零。按「每个特性都要有调用点证据」原则（与 D-041 同源），Map 缓
+- **代价**：token/lexer `[` `]`；AST `Array`/`DynIndex`/`ForIter`；typecheck `Ty::Arr` + push/len/contains 特判；4 个 opcode（NewArr/ArrPush/ArrLen/ArrGet）+ PUSH builtin；VM 堆 `HeapObj::Arr` + 结构相等；cache `write_ty` tag 9 + **VERSION 4→5**；host `Vec<T>` 边界；eval.rs 同步。约 +900 行含测试
+- **明确不做（v2 候选，出现调用点再议）**：`arr[i] = x` 下标赋值、数组 `==`（与元组同策略拒绝）、`pop/insert/remove`、数组插值/解构
+- **C ABI**：数组不能跨 C 边界（`MsVal` 是扁平结构，v1 明确报错）；Rust 宿主边界 `Vec<T>` 自由往返
 
 ### ADR-005 · for 循环纳入 v1
 - **日期**：2026-11-20
@@ -551,12 +570,15 @@ call       := ident "(" (expr ("," expr)*)? ")"
 | Q13 | eval.rs 参考解释器与 VM 行为分歧：`==`/`!=`/排序对 bool / str / 句柄落入 `as_f64` 报错（VM 有 EqBool/EqStr 等正确实现）；宿主错误 `ErrorKind` 被压平为 runtime（VM 侧已按 D-028 透传） | 已解决（2026-11-21） | eval_binary 补 bool / 句柄 / 字符串三个分派臂（实现时发现字符串 `+` 拼接同样落入浮点路径，范围比审查记录更大）；eval_call 用 `Error::new(e.kind, …)` 透传宿主错误类型；tests/eval_parity.rs 4 项把两引擎钉在同一语义，实测全绿 |
 | Q14 | typecheck 与 codegen 对「无 else 的 if 语句 / 末位赋值语句」的块值类型分歧（typecheck 记 Unit，codegen 传播分支/变量类型），当前被 sig 边界掩盖为静默丢值（`func f(c) { if c { 1 } }` 返回 Unit）；另有 cache.rs `validate_wire` 严格度低于 validate.rs（off-by-one 被第二道校验兜住）、validate 不校验 `CallScript` 实参个数（损坏 .sbc 走 catch_unwind 报 internal panic 而非干净消息） | 已解决（2026-11-21） | codegen 统一为 Unit（对齐 checker / Rust 语义；边界行为零变化，消除 `let x = { … }` 场景的 codegen env 类型漂移）；validate 校验 CallScript 实参**不超过被调窗口**（结构安全界，防 argv 拷贝越界 panic；语义 arity 留给 checker——首轮误用 `== params.len()` 被 cache.rs 的 opcode roundtrip 测试抓回后修正）；validate_wire 收紧至与 validate.rs 同级（register 用 >=、跳转 target 严格 <）。实测全绿（含修正后的 validate.rs 4 项） |
 | Q15 | 语言语义毛边：① 内置名遮蔽——`func abs(x) {…}` 可通过编译，但脚本内部调用命中内置实现，只有作为入口点被宿主调用才走用户函数（与宿主同名直接报错不对称）；② `()` 字面量产生 `Ty::Tuple([])` 而非 `Ty::Unit`，两者渲染同为 `()` 但互不 unify | 已解决（2026-11-21） | ① typecheck Pass 1 增加内置名保留检查（措辞 "is a reserved built-in name"，与宿主碰撞的 "already defined by the host" 区分）；② `()` 字面量在 typecheck / codegen / eval / `parse_type` 四处统一归一为 Unit，`.sbc` VERSION 2→3 强制重建缓存（wire 格式未变，防旧缓存以 `Tuple([])` 语义存活）；新增 tests/language_semantics.rs 3 项，全量 173 项实测无存量脚本依赖旧语义 |
+| Q16 | 是否给语言加 Map/Array（用户 2026-11-21 提议：它们是基础设施而非单个功能，没有就要东拼西凑甚至让宿主配合） | 已解决（2026-11-21，ADR-018） | **数组进入语言**（v1.2，Python 式引用语义——VM 堆索引模型天然支持别名，无闭包 → 循环引用不可构造 → 无需 GC，ADR-004 的否决前提失效）；**Map 暂缓**——盘点 browser_task_archive 全部 Map 用法均为固定字段记录（键全是字面量），元组 + 元组数组 100% 覆盖，动态键查表调用点为零；重启条件写进 ADR-018（动态键 / 字段 > 8 / 键枚举） |
 
 ---
 
 ## 第九章 · 变更日志
 
 > 倒序追加。格式：`日期 · 变更内容 · 影响范围`
+
+- **2026-11-21** · **数组进入语言（ADR-018 / D-045，Q16 解决）**：决策链——用户提出 Map/Array 是基础设施而非单个功能（"没有就要东拼西凑甚至让宿主配合"）；盘点两宿主全量脚本后定性：**数组必须加**（so_demo 50 脚本 push/for-in 无处不在 + browser_task_archive 9 个数组变量），**Map 暂缓**（browser_task_archive 全部 Map 用法实为固定字段记录、键全是字面量，元组 + 元组数组 100% 覆盖，动态键调用点为零；重启条件写入 ADR-018）。语义：**Python 式引用**（赋值/传参是别名）——VM 堆索引模型下 `Mov` 拷贝槽位即别名，几乎零成本；循环引用不可构造（`push(a, a)` 是 infinite type 被 occurs 检查拒绝）→ 不需要 GC → ADR-004 当年否决的前提失效。实现：token/lexer `[` `]`；AST `Array`/`DynIndex`/`ForIter`（`for x in arr` 与 range 泛化并存）；typecheck `Ty::Arr` + push/len/contains 元素类型特判（**len/contains 对未约束变量保持旧行为钉 str**——否则 `func f(s){len(s)}` 参数被钉成 [i64]、宿主传 str 被边界拒绝，回归被 tutorial_examples 抓回）；4 opcode（NewArr/ArrPush/ArrLen/ArrGet，cache wire tag 72–75）+ PUSH builtin（id 19，白名单唯一副作用函数）+ `HeapObj::Arr` 堆对象 + push 逐元素计费（配额先查后分配）+ slots_equal 结构相等；cache `write_ty` tag 9 + **VERSION 4→5**；host `Vec<T>` 三件套（ScriptType/FromValue/HostResult，边界=快照）+ `type_matches` 数组递归对账 + C ABI 明确拒绝数组结果；eval.rs 参考解释器同步（`Value::Arr(Rc<RefCell<Vec<Value>>>)` 共享 payload，两引擎别名语义一致）。测试：新增 tests/arrays.rs 18 项（双引擎同断言防分叉：字面量/下标/len/for-in/push 推断/别名/传参引用/元组数组/嵌套/越界/编译期错误/`push(a,a)` infinite type/配额/宿主 Vec 返回与接收/缓存往返/迭代中 push）；存量 type_errors 1 项更新（len 多态化后报错措辞 `len expects …, found i64`，期望在前方向不变）。**240 项全绿、release 零警告**，基线 11 位基准无回退（fib 129µs / 循环 1.25µs / compile (memory) 28µs 与 D-044 水位一致）· 第三章 / 第八章 Q16 / 第九章 / ty.rs / token.rs / lexer.rs / value.rs / ast.rs / parser.rs / typecheck.rs / ir.rs / codegen.rs / vm.rs / validate.rs / cache.rs / host.rs / engine.rs / ffi.rs / eval.rs / tests/arrays.rs / tests/type_errors.rs / tests/tutorial_examples.rs / docs/TUTORIAL.md / docs/HOST_GUIDE.md
 
 - **2026-11-21** · **性能/稳定/安全三线加固（D-044）**：① 性能——Criterion 基线（before-import-perf）+ loader 行号计数 O(n²)→O(n) 增量维护 + 基准位 11（import 编译）；基线对比三连测确认无回退（首轮 rust 基线自漂 +4.5% 证实机器噪声 ±5%，compile (memory) 专项 5 秒窗复测 p=0.98 无变化）。② 稳定——`tests/import_fuzz.rs` 4 项：随机 import 图 300 轮永不 panic、深度/数量上限实测触发、逃逸尝试全拒绝、Windows 设备名拒绝（测试自身踩中 `.vt`/`.bk` 扩展名陷阱——改名后的肌肉记忆错误）。③ 安全——**deps_fresh 正确性修复**：resolver 来源依赖无路径可读，原实现按路径读盘必然失败→缓存永不命中（is_file 标记区分，resolver 依赖失效由宿主 resolver 自行决定）；import 逃逸加固（canonicalize 包含性检查防 symlink/junction 出树 + Windows 保留设备名 CON/NUL/... + 控制字符 + 组件尾点/尾空格拒绝）；cache decode 拒绝 `..` 组件与坏 flag 依赖（防恶意 .sbc 借依赖校验做路径探测）。测试 217→**222 项全绿、零警告** · engine.rs / cache.rs / tests/import_fuzz.rs / tests/import_stmt.rs
 - **2026-11-21** · **项目更名：`vitul` → `brook`（D-043）**：用户昵称「小河」的英译——crates.io `brook` 已被占用（BrookGPU 学术撞名），**用户明确接受放弃发布资格**（本地项目）；扩展名 `.vt` → `.bk`。历史条目中的旧名随全文替换统一，唯 Q4 / D-040 / 代号行三处回改为历史表述保真。测试 206→217 项（import 11 项），全绿零警告 · 全部文件
