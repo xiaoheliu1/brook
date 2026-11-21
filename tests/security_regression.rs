@@ -541,3 +541,73 @@ fn cached_import_script_keeps_combined_source() {
     assert_eq!(s1.source, s2.source);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ===========================================================================
+// 第三批（D-046 续）：确定性 encode、FFI UTF-8 截断、参数上限口径
+// ===========================================================================
+
+/// 4.7：同一脚本 + 同一指纹，两次 encode 产出的字节必须完全一致——
+/// HashMap 无序迭代曾让构建产物比对与缓存 diff 失效。
+#[test]
+fn encode_is_deterministic() {
+    let mut engine = Engine::new();
+    register_fn!(engine, "log", (String) -> i64, |s: String| s.len() as i64).unwrap();
+    let script = engine
+        .load_str("func main() { log(\"a\") + log(\"b\") }")
+        .unwrap();
+    let fp = engine.fingerprint();
+    let b1 = brook::cache::encode(&script, &fp);
+    let b2 = brook::cache::encode(&script, &fp);
+    assert_eq!(b1, b2, "encode must be byte-for-byte reproducible");
+}
+
+/// 5.13：`ms_last_error` 按字节截断必须落在 UTF-8 字符边界上——C 侧拿到
+/// 的一定是合法 UTF-8（旧实现会在 CJK 字符中间切断）。
+#[test]
+fn ffi_error_truncation_is_utf8_safe() {
+    use brook::ffi::ms_last_error;
+    use std::ffi::CString;
+
+    // 触发一个含 CJK 的错误消息（import 文件找不到，消息带路径与中文）
+    let src = CString::new("import \"不存在\"
+
+func main() { 1 }").unwrap();
+    let func = CString::new("main").unwrap();
+    let mut out: i64 = 0;
+    unsafe {
+        brook::ffi::ms_call_i64(src.as_ptr(), func.as_ptr(), 1, &mut out);
+        // 小缓冲（6 字节 → 至多 5 字节消息 + NUL）：中文 3 字节/字符，
+        // 截断必须回退到边界
+        for cap in 2..8usize {
+            let mut buf = vec![b'a'; cap];
+            let n = ms_last_error(buf.as_mut_ptr() as *mut _, cap);
+            assert!(n < cap, "n={} cap={}", n, cap);
+            buf[n] = 0;
+            let s = std::str::from_utf8(&buf[..n]);
+            assert!(s.is_ok(), "cap={}: truncated message is not UTF-8: {:x?}", cap, &buf[..n]);
+        }
+    }
+}
+
+/// 5.13：函数参数上限与 MAX_OPERANDS 同口径——入口参数 >8 在定义处
+/// 一并报错（旧实现定义能过、脚本内部调用必挂的不对称）。
+#[test]
+fn function_params_capped_at_max_operands() {
+    let engine = Engine::new();
+    let err = engine
+        .load_str("func f(a, b, c, d, e, g, h, i, j) { a }")
+        .unwrap_err();
+    assert!(
+        err.message.contains("has 9 parameters"),
+        "{}",
+        err.message
+    );
+    // 8 个参数合法
+    let ok = engine
+        .load_str("func f(a, b, c, d, e, g, h, i) { a + i }")
+        .unwrap();
+    assert_eq!(
+        engine.call(&ok, "f", vec![Value::I64(1); 8]).unwrap(),
+        Value::I64(2)
+    );
+}

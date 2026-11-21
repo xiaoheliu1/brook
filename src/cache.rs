@@ -478,8 +478,12 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
         write_sig(&mut w, &FuncSig { params: params.clone(), ret: ret.clone() });
     }
 
+    // 确定性编码（D-046 4.7）：HashMap 遍历顺序不定，两次 encode 出的字节
+    // 会不同——破坏构建产物比对与缓存 diff。按名字排序后写。
     w.u32(script.sigs.len() as u32);
-    for (name, sig) in &script.sigs {
+    let mut sig_pairs: Vec<_> = script.sigs.iter().collect();
+    sig_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, sig) in sig_pairs {
         w.str(name);
         write_sig(&mut w, sig);
     }
@@ -496,8 +500,11 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
         for ins in &f.code { write_instr(&mut w, ins); }
     }
 
+    // 同上：ids 按名字排序，保证逐字节可复现
     w.u32(script.code.ids.len() as u32);
-    for (name, id) in &script.code.ids {
+    let mut id_pairs: Vec<_> = script.code.ids.iter().collect();
+    id_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, id) in id_pairs {
         w.str(name);
         w.u16(*id);
     }

@@ -83,6 +83,21 @@ impl Checker {
                     f.span,
                 ));
             }
+            // 参数上限与 MAX_OPERANDS 同口径（D-046 5.13）：入口函数此前
+            // 可以带 >8 个参数（Vm::call 直接走 Vec），但脚本内部调用它
+            // 需要 CallScript 的内联寄存器列表（≤8）——定义能过、调用必挂，
+            // 把不对称压到定义处一并报错。
+            if f.params.len() > crate::ir::MAX_OPERANDS {
+                return Err(Error::type_error(
+                    format!(
+                        "function `{}` has {} parameters; the maximum is {}",
+                        f.name,
+                        f.params.len(),
+                        crate::ir::MAX_OPERANDS
+                    ),
+                    f.span,
+                ));
+            }
             let params = f
                 .params
                 .iter()

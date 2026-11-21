@@ -716,7 +716,10 @@ impl<'a> Vm<'a> {
                     code = ncode;
                 }
                 Op::CallHost { func, args, dst } => {
-                    let sig = self.host.sig_by_id(func);
+                    let sig = self
+                        .host
+                        .sig_by_id(func)
+                        .map_err(|e| Error::new(e.kind, e.message, Some(instr.span())))?;
                     let vals = self.gather_values(base, &args, &sig.params)?;
                     let result = self
                         .host

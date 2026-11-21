@@ -220,6 +220,16 @@ pub unsafe extern "C" fn ms_call_i64(
     }
 }
 
+/// 按字节上限回退到 UTF-8 字符边界的截断长度（D-046 5.13：字节截断会
+/// 切断 CJK 字符，C 侧拿到非法 UTF-8 序列）。
+fn utf8_cut(s: &str, max: usize) -> usize {
+    let mut n = s.len().min(max);
+    while n > 0 && !s.is_char_boundary(n) {
+        n -= 1;
+    }
+    n
+}
+
 /// Copy the last error message (NUL-terminated) into `buf`. Returns the number
 /// of bytes written, excluding the terminator. A zero-length buffer is safe.
 ///
@@ -233,7 +243,7 @@ pub unsafe extern "C" fn ms_last_error(buf: *mut c_char, len: usize) -> usize {
     LAST_ERROR.with(|e| {
         let text = e.borrow();
         let bytes = text.msg.as_bytes();
-        let n = bytes.len().min(len - 1);
+        let n = utf8_cut(&text.msg, len - 1);
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.cast::<u8>(), n);
         *buf.add(n) = 0;
         n
@@ -679,8 +689,18 @@ pub unsafe extern "C" fn ms_script_free(script: *mut MsScript) -> c_int {
             report: String::new(),
         }),
         Some(_) => {
-            drop(Box::from_raw(script));
-            MS_OK
+            // Drop 链（Engine/Script/堆字符串）理论上有 panic 面——
+            // extern "C" 里穿出 unwind 是 UB，边界兜住并上报（D-046 3.10：
+            // 这是唯一没包 catch_unwind 的入口）。
+            match catch_unwind(AssertUnwindSafe(|| drop(Box::from_raw(script)))) {
+                Ok(()) => MS_OK,
+                Err(_) => record(Failure {
+                    code: MS_ERR_PANIC,
+                    msg: "internal panic while releasing the script handle".into(),
+                    span: None,
+                    report: String::new(),
+                }),
+            }
         }
     }
 }
@@ -700,7 +720,7 @@ pub unsafe extern "C" fn ms_last_report(buf: *mut c_char, len: usize) -> usize {
     LAST_ERROR.with(|e| {
         let text = e.borrow();
         let bytes = text.report.as_bytes();
-        let n = bytes.len().min(len - 1);
+        let n = utf8_cut(&text.report, len - 1);
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.cast::<u8>(), n);
             *buf.add(n) = 0;

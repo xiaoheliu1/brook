@@ -36,6 +36,10 @@ enum Flow {
 }
 
 impl<'a> Interpreter<'a> {
+    /// **参考实现，不是生产执行引擎**：与 VM 相比没有内存配额（无
+    /// max_heap）、gas 口径不同（按 AST 节点而非指令）、且不支持
+    /// break/continue 在表达式位置。定位是语义对照与差分测试的基准——
+    /// 生产负载一律走 `Engine::call`（字节码 VM），见 PROJECT_PLAN 2.1。
     pub fn new(
         funcs: &'a HashMap<String, FuncDecl>,
         host: &'a HostRegistry,

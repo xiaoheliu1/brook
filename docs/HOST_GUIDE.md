@@ -211,7 +211,9 @@ let engine = Engine::new().set_import_resolver(|name| {
 
 不配置时，import 只能解析**从文件加载**的脚本（相对脚本自身目录）；内存脚本（load_str）写 import 会明确报错。
 
-缓存：`.sbc`（v4）记录依赖清单（路径 + hash），`load_cached` / `compile_cached` 加载时逐一校验——**任一依赖文件改一个字，依赖它的脚本缓存自动失效重建**；`reload` 重新解析 import 同理。
+**查找优先级（重要）**：配置了 `set_import_dir` 后它**覆盖**「脚本自身目录」——包括依赖脚本自己的相对 import。`libs/net/http.bk` 里写 `import "socket"` 会去 `<import_dir>/socket.bk` 找，而不是 `libs/net/socket.bk`。设计原因：`import_dir` 是显式配置，覆盖隐式约定（脚本所在目录）；子目录库想要兄弟模块，就把 import_dir 设到子目录树顶部（如 `libs`）并用 `import "net/socket"` 子路径。**缓存校验同样按 import_dir 收敛**：依赖路径解析到 import_dir 之外的缓存一律判失效重建（v6 起）。
+
+缓存：`.sbc`（v6）记录依赖清单（路径 + hash）与拼接视图源码，`load_cached` / `compile_cached` 加载时逐一校验——**任一依赖文件改一个字，依赖它的脚本缓存自动失效重建**；`reload` 重新解析 import 同理。另外每个 `Script` 绑定编译时的宿主指纹，拿到注册表不同的 Engine 上调用会明确报错（不会按槽位 id 静默调错函数）。
 
 **历史方案（备选）**：宿主拼接——读几份源码拼成一份再编译（下面的 `load_with_libs`）。在语言没有 import 的时代它是唯一解；现在 import 已内置，拼接仅在「宿主想完全控制合并内容」时才有意义：
 

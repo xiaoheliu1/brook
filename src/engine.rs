@@ -64,8 +64,13 @@ impl HostRegistry {
         self.ids.get(name).copied()
     }
 
-    pub fn sig_by_id(&self, id: u16) -> &FuncSig {
-        &self.entries[id as usize].sig
+    /// `Err` 而不是直接索引（D-046 3.10：`invoke_by_id` 用 `.get()`，
+    /// 两者不一致——一个 panic 一个 Err 的边界不是承诺的边界）。
+    pub fn sig_by_id(&self, id: u16) -> Result<&FuncSig> {
+        self.entries
+            .get(id as usize)
+            .map(|e| &e.sig)
+            .ok_or_else(|| Error::runtime("unknown host function"))
     }
 
     pub fn invoke_by_id(&self, id: u16, args: &[Value]) -> Result<Value> {
@@ -204,6 +209,8 @@ pub struct Engine {
     max_heap: u64,
     /// 约定式 import 的查找目录：`import "common"` → `<目录>/common.bk`。
     import_dir: Option<PathBuf>,
+    /// 已注册的不透明类型名（`register_type`；防同名不同型混入诊断）
+    type_names: std::collections::HashSet<String>,
     /// 约定式 import 的自定义解析器——设置时优先于 `import_dir`，
     /// 宿主决定 `import "名字"` 的源码内容（assets / DB / 内置字符串）。
     import_resolver: Option<Rc<dyn Fn(&str) -> std::result::Result<String, Error>>>,
@@ -217,6 +224,7 @@ impl Engine {
             max_steps: 10_000_000,
             max_depth: 256,
             max_heap: 4 << 20,
+            type_names: std::collections::HashSet::new(),
             import_dir: None,
             import_resolver: None,
         }
@@ -253,8 +261,18 @@ impl Engine {
     typed_registration!(register_typed6, A: a, B: b, C: c, D: d, E: e, G: g);
 
     /// Register an opaque Rust type so handlers can receive it by name.
+    /// 注册不透明类型名（供诊断与 `Opaque` 的名字校验对齐）。同名不同型
+    /// 会被拒绝——静态类型系统按名字区分句柄，两个模块的同名类型在脚本
+    /// 侧不可区分（运行时由 `FromValue` 的 downcast 兜底，见 5.8）。
     pub fn register_type<T: 'static>(&mut self) -> Result<()> {
-        let _ = short_type_name(std::any::type_name::<T>());
+        let name = short_type_name(std::any::type_name::<T>());
+        if self.type_names.contains(&name) {
+            return Err(Error::runtime(format!(
+                "opaque type `{}` is already registered",
+                name
+            )));
+        }
+        self.type_names.insert(name);
         Ok(())
     }
 
