@@ -479,7 +479,7 @@ substr(filename, 0, 5) == "probe"     // "以 probe 开头"的土办法
 
 | 错误信息 | 原因 | 修法 |
 |---|---|---|
-| `expected Func, found ...` | 顶层写了语句 | 包进 `func main() { ... }` |
+| `expected Func, found ...` | 顶层写了语句 | 包进函数（入口名由宿主约定，习惯叫 `main`，见 §1） |
 | `unexpected character ';'` | 写了分号 | 删掉（本语言无分号） |
 | `type mismatch: expected i64, found str` | 类型不匹配 | `to_str()`/`to_i64()` 转换，或统一类型 |
 | `argument type mismatch: expected i64, got str. Annotate the parameter...` | 参数类型推断成了 i64 | 给参数加标注：`(x: str)` |
