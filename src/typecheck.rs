@@ -441,12 +441,30 @@ impl Checker {
                 let base_ty = self.infer_expr(base)?;
                 let bt = self.resolve(&base_ty);
                 match bt {
-                    Ty::Tuple(ts) => ts.get(*index).cloned().ok_or_else(|| {
-                        Error::type_error(
+                    Ty::Tuple(ts) => {
+                        if let Some(t) = ts.get(*index) {
+                            return Ok(t.clone());
+                        }
+                        // 长度不够时，若 base 仍是一个可重绑定的推断变量
+                        // （例如参数先被 `.0` 反推成短元组），把它扩长成至少
+                        // index+1 元 —— ADR-006 的"至少 N+1 元"语义需要对
+                        // 已部分推断的元组续推，否则 `func f(t) { t.0 + t.1 }`
+                        // 在第二个索引处就会误报越界。运行时边界本就接受
+                        // 更长的元组（type_matches 长度≥），这里对齐。
+                        if let Ty::Var(id) = base_ty {
+                            let mut elems = ts.clone();
+                            while elems.len() <= *index {
+                                elems.push(self.fresh());
+                            }
+                            let wanted = elems[*index].clone();
+                            self.subst[id] = Some(Ty::Tuple(elems));
+                            return Ok(wanted);
+                        }
+                        Err(Error::type_error(
                             format!("tuple index {} out of range (len {})", index, ts.len()),
                             *span,
-                        )
-                    }),
+                        ))
+                    }
                     Ty::Var(_) => {
                         // Reverse-infer: an unknown indexed base must be a
                         // tuple with at least index+1 elements.

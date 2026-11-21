@@ -9,7 +9,7 @@
 > - 时间线倒序追加（新的记录放最上面）。
 
 **创建日期**：2026-11-20
-**当前状态**：阶段 3 功能全部落地（安全边界、`register_fn!` 类型化 FFI、C ABI / JNI 双 ABI 打包、`.sbc` 字节码缓存）。真机验证已于 2026-11-21 在 PLR110（Android 16 / arm64-v8a / SELinux Enforcing）完成（见 Q10 / D-032），产物已完成交叉编译 + ELF/导出符号校验。测试演进：自查修复后 64 项 → 迁移可行性验证后 65 项 → 补 `break` / `continue` 后 77 项 → 补 `/* */` 块注释与类型错误信息方向统一后 107 项 → 补诊断能力（字符列号 / 调用栈 / 源码片段渲染 / 宿主错误类型透传）后 118 项 → 补嵌套深度上限（修栈溢出崩溃）后 126 项 → 补数值内置 i64、C ABI 错误定位、线程/重载语义后 149 项（147 项单测/集成 + 2 个 doctest，另有 1 个 `ignore` 示例），release 构建通过；2026-11-21 静态审查修复两处 P1（if 表达式 else-if 深度守卫、EqHandle 对象身份语义）并解决 Q13/Q14（参考解释器对齐 VM、块值类型统一、validate 硬化），累计新增 10 项回归，**159 项全绿**（157 单测/集成 + 2 doctest + 1 ignore 示例）、release 构建零警告（shell 恢复后实测）；2026-11-21 C ABI 句柄式脚本层落地（ADR-015 / D-033），新增 7 项 FFI 测试；同日解决 Q15 并新增零依赖 fuzz 冒烟（D-034），累计 **173 项全绿**
+**当前状态**：阶段 3 功能全部落地（安全边界、`register_fn!` 类型化 FFI、C ABI / JNI 双 ABI 打包、`.sbc` 字节码缓存）。真机验证已于 2026-11-21 在 PLR110（Android 16 / arm64-v8a / SELinux Enforcing）完成（见 Q10 / D-032），产物已完成交叉编译 + ELF/导出符号校验。测试演进：自查修复后 64 项 → 迁移可行性验证后 65 项 → 补 `break` / `continue` 后 77 项 → 补 `/* */` 块注释与类型错误信息方向统一后 107 项 → 补诊断能力（字符列号 / 调用栈 / 源码片段渲染 / 宿主错误类型透传）后 118 项 → 补嵌套深度上限（修栈溢出崩溃）后 126 项 → 补数值内置 i64、C ABI 错误定位、线程/重载语义后 149 项（147 项单测/集成 + 2 个 doctest，另有 1 个 `ignore` 示例），release 构建通过；2026-11-21 静态审查修复两处 P1（if 表达式 else-if 深度守卫、EqHandle 对象身份语义）并解决 Q13/Q14（参考解释器对齐 VM、块值类型统一、validate 硬化），累计新增 10 项回归，**159 项全绿**（157 单测/集成 + 2 doctest + 1 ignore 示例）、release 构建零警告（shell 恢复后实测）；2026-11-21 C ABI 句柄式脚本层落地（ADR-015 / D-033）；同日解决 Q15 + fuzz 冒烟（D-034）、完成 rhai_demo/so_demo 迁移评估与 so_demo 改写 POC（D-035），累计 **177 项全绿**
 **项目代号**：`miniscript`（crate 名，已落地）
 
 ---
@@ -467,6 +467,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
   - ❌ 真正无法靠注册层绕过的是 `break/continue` 与 `import` 模块：前者要改写控制流或给引擎加两个关键字（小改），后者靠宿主预拼接 lib 源码规避；若要原生支持则触碰引擎。
 - **工作量实测**：原 rhai 脚本 187 行 → 改写 .ms 95 行；宿主侧新增 24 个注册函数（访问器 + 列表适配器 + mock）。注意这是**单个最难脚本 + mock 宿主**的量，全量 34 脚本的真实成本远高于此。
 - **决策**：不新增 Map/List/方法调用语法（会摧毁极简定位）；迁移走「宿主适配层 + 脚本改写」。是否整套迁移属业务决策，本 ADR 只证明技术可行性与边界。
+- **修订（2026-11-21，D-035）**：本 ADR 记录的两条静态类型代价之一——「宿主返回值仅支持到 2 元组」——已被 host.rs 桥接层扩展解除（`impl_tuple_n!` 覆盖 2–8 元；语言本身一直支持 N 元组，缺口在桥接层）。变长记录集仍走 Opaque + count/indexed getter。rhai_demo 与 android_so_demo 的全量暴露函数清单与分层可行性评估见 `docs/migration/`，so_demo 两个真实脚本（t_wifi、bind_verify）的忠实改写 POC 见 `tests/migration_so_demo.rs`。
 
 ### ADR-014 · AOT 移出路线图，冻结为最低优先级备选
 - **日期**：2026-11-21
@@ -505,7 +506,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 | Q3 | 整数溢出按错误终止是否符合使用场景？ | 已解决（错误终止） | 阶段 1 按此实现，见第十章 D-003 |
 | Q4 | 项目代号定名 | 已解决 | 定为 `miniscript` |
 | Q5 | 是否引入可选值 `T?` | 倾向否 | 见 ADR-004，除非出现强需求 |
-| Q6 | 全推断边界：宿主调用点的参数类型脚本内不可见 | 部分缓解 | 默认 I64 收敛 + 索引反推 + 边界类型校验（不匹配明确报错，见 D-008）；根治需"宿主声明脚本函数签名" |
+| Q6 | 全推断边界：宿主调用点的参数类型脚本内不可见 | 部分缓解 | 默认 I64 收敛 + 索引反推 + 边界类型校验（不匹配明确报错，见 D-008）；根治需"宿主声明脚本函数签名"。2026-11-21：索引反推补齐**续推**语义——已部分推断成短元组的变量遇到更大索引时扩长而非误报越界（D-035，此前 `func f(t) { t.0 + t.1 }` 编译失败） |
 | Q7 | 内置数学函数 `abs/min/max` 当前仅接受 f64，i64 需 `to_f64` 转换 | 已解决 | `abs`/`min`/`max` 改为数值泛型：实参全 i64 则结果 i64（`ir::builtin` 追加 16/17/18 三个 id，`numeric_id` 在 codegen 选变体，**不加 opcode、不动 `.sbc` VERSION**）；`abs(i64::MIN)` 走 `checked_abs` 报 `i64 abs overflow` 而不是 Rust panic。`sqrt/floor/ceil/pow` **保持仅 f64**——整数开方没有精确 i64 结果，静默截断比报错更糟 |
 | Q8 | 性能与 3–8× 目标：当前 fib 27.6× / 循环 8.6×（优化后） | 循环达标，递归仍有差距 | 两轮优化把 fib 从 765×→211µs（27.6×）。循环类工作负载已进入目标区间；纯递归是解释器最不利场景（无内联空间）。进一步突破只剩 JIT 一条路（Q11 / ADR-012 草案）；AOT 已按 ADR-014 冻结移出——牺牲热重载，且 JIT 账本翻转后不再有独特优势 |
 | Q9 | IR 优化（常量折叠 / 死代码消除）、字节码 `.sbc` 缓存 | 已解决（结论见 ADR-010） | `.sbc` 已落地：内存解码 1.52µs vs 编译 7.96µs（5.2×），但磁盘路径受文件 I/O 主导无优势，故不作默认加速；IR 优化仍推迟（融合分支/立即数加法已吃掉大部分收益） |
@@ -522,6 +523,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 > 倒序追加。格式：`日期 · 变更内容 · 影响范围`
 
+- **2026-11-21** · **rhai_demo / android_so_demo 迁移评估 + so_demo 改写 POC（D-035）**：两个宿主全量暴露面盘点（rhai_demo：229 注册 / ~197 名 / 45 Map + 22 Array 返回；so_demo：232 重载 / 190 名 / 19 Map + ~55 Array 返回），完整清单入 `docs/migration/{rhai_demo,so_demo}_inventory.md`。① host.rs `impl_tuple_n!` 把宿主元组桥接从 2 元扩到 **2–8 元**（ADR-013「仅 2 元组」实为桥接层缺口而非语言缺口，正式解除）；② typecheck 修复索引反推的**续推**缺口（`func f(t) { t.0 + t.1 }` 此前在第二索引误报越界，现按 ADR-006「至少 N+1 元」扩长）；③ `tests/migration_so_demo.rs` 4 项 POC——t_wifi（标量面 + OK/ERR 契约 + 编译错/宿主 Err 双失败通道）、bind_verify 忠实改写（Map→元组、Array<Map>→Opaque+indexed getter、try/catch→(ok,err) 探针，9 行日志逐一断言）、Task 句柄（内部可变性）、2–8 元组往返与类型错误。测试 173→**177 项全绿、零警告** · 第七章 ADR-013 修订、第八章 Q6、第九章、docs/migration/、host.rs / typecheck.rs / tests/migration_so_demo.rs
 - **2026-11-21** · **Q15 解决 + 零依赖 fuzz 冒烟（D-034）**：① typecheck Pass 1 增加**内置名保留检查**——`func abs(x){…}` 现在报 `[type] function … is a reserved built-in name`（与宿主碰撞措辞区分；此前内部调用静默命中内置、只有入口点可达，行为不对称）；② `()` 字面量在 typecheck / codegen（`ConstUnit` 不再分配空元组）/ eval / `parse_type`（`: ()` 注解即 Unit 类型）**四处归一为 Unit**，`.sbc` **VERSION 2→3** 强制重建（wire 不变，防旧缓存带旧语义存活）；③ 新增 `tests/fuzz_smoke.rs` 4 项**零依赖模糊冒烟**：5000 轮 .sbc 字节变异（翻转/截断/拼接/覆写）解码永不 panic、magic/version/截断头门控、3000 轮随机 token 源码编译永不 panic、200 轮随机长度深度压力（含 else-if 表达式阶梯——即 D-030 修过的那条路径）必被 MAX_NESTING 拦截；④ 新增 `tests/language_semantics.rs` 3 项固定新语义。测试 166→**173 项全绿、零警告**，既有脚本无一依赖旧语义（迁移/集成测试全过）· 第三章 3.8、第八章 Q15、第九章、typecheck.rs / codegen.rs / eval.rs / parser.rs / cache.rs / tests
 - **2026-11-21** · **C ABI 句柄式脚本层（ADR-015 / D-033）**：新增 `ms_script_create` / `ms_script_create_cached`（接线 `compile_cached`）/ `ms_script_call`（`MsVal` 标量+字符串跨边界，i64→f64 自动提升）/ `ms_script_reload`（原地热重载，失败保留旧字节码）/ `ms_script_free` 与 `ms_last_report`（多行诊断过 C 边界）六个**增量导出**；`MS_ERR_BUFFER=6`（buffer 不足带所需大小）/ `MS_ERR_THREAD=7`（句柄绑定创建线程，跨线程拒绝且异线程 free 不取所有权），`ms_abi_version` 保持 1；句柄/元组结果不可跨边界（ADR-011 最小攻击面延续）。宿主新增 7 项 FFI 测试——**166 项全绿、零警告**；`android_cli` 扩展句柄段，PLR110 真机全过（缓存落盘并二次命中、多参数、字符串增长重试、错误定位、reload 后新逻辑生效、free 语义）· 第三章 3.7、第七章 ADR-015、第九章、ffi.rs / tests/ffi.rs / examples/android_cli.rs
 - **2026-11-21** · **AOT 移出路线图（ADR-014）**：阶段 4 冻结为最低优先级备选，不再作为活跃路线图阶段；§1.1 定位改为单模 VM、§1.2/§2.6/§5/§6 的 AOT 表述标注冻结、§2.4 保留设计记录并注明重估条件、ADR-002 增加修订注、Q8 备注改为「突破只剩 JIT 一条路」；顺带修正 §2.1 架构图残留的 SSA 表述（D-006 已否决 SSA）并给 §2.2 补 ADR-001 修订注（原「JIT 不可行」前提已证伪）。源码零 AOT 引用（grep 确认），无代码改动 · 第一章、第二章、第四章、第五章、第六章、第七章 ADR-002/ADR-014、第八章 Q8
@@ -879,6 +881,30 @@ call       := ident "(" (expr ("," expr)*)? ")"
 **验证**：173 项全绿（171 单测/集成 + 2 doctest）、零警告；既有全部脚本测试在「内置名保留」与「() 归一」下无回归——包括 rhai 迁移可行性测试，确认无存量依赖。**真机复验**（PLR110）：重建产物两次 smoke test 全过（v3 缓存写入 + 二次命中，pull 校验头 `4d53 4243 0300`）；`func len(s)` 在设备上报 `reserved built-in name`（4:1 定位，exit=1）；`() ` 字面量 + `: ()` 注解经 C ABI 往返显示 `()`。测试遗留已清理。
 
 **下一步**：建议 ③ 完成后进入「rhai 迁移试点（2-3 个真实脚本）或 Q11 JIT 原型」的业务决策点；工程侧剩余项为 CI（test + Android 交叉编译矩阵）与 libFuzzer 级 fuzz 放 CI。
+
+### 2026-11-21 · rhai_demo / android_so_demo 迁移评估 + so_demo 改写 POC（D-035）
+
+**背景**：用户要求对 rhai_demo（PC 宿主，229 注册 / 34 脚本 6905 行）与 android_so_demo（Android .so，232 重载 / 50 脚本）做迁移测试：读源码、盘点暴露函数、评估极简引擎能否接住。两个 Explore 代理产出全量清单（存档 `docs/migration/{rhai_demo,so_demo}_inventory.md`）。
+
+**关键发现（数据驱动）**：
+1. **ADR-013 的「2 元组限制」是桥接层缺口，不是语言缺口**——脚本语言一直支持 N 元组（≤8），只是 host.rs 只实现 2 元组桥。`impl_tuple_n!` 宏一处补齐 2–8 元。这条限制解除后，两个宿主的大半 Map 返回可直接元组化。
+2. **typecheck 索引反推缺续推**：`func f(t) { t.0 + t.1 }` 在第二索引处误报 `tuple index 1 out of range (len 1)`——首次 `.0` 已把参数反推成 1 元元组，后续更大索引只查不扩。ADR-006 记录的语义是「至少 N+1 元」，实现只做一次。修复：元组长度不足且 base 仍是推断变量时，重写 subst 扩长（运行时 `type_matches` 本就接受更长元组，两边对齐）。POC 测试当场抓到，属真实语言修复非测试问题。
+3. **两个宿主画像差异大**：rhai_demo 45 Map + 22 Array 返回、22/34 脚本用 try/catch（253 块）、diag.rhai 1097 行行为回归网；so_demo 19 Map + ~55 Array 返回但脚本侧 **Map 字面量 0、闭包 0、try/catch 仅 2 个实质脚本**、脚本小（最大 128 行）、契约简单（`OK\t`/`ERR\t`，末值丢弃）。
+4. **宿主消费方式利好**：rhai_demo 的 runner 对脚本返回值只 `to_string()` 打印（数据走 stdout+文件）；so_demo 末值直接丢弃。**两者都不依赖返回值结构化**——结构化数据全部经由宿主函数交换，这正是元组化/Opaque 化可行的前提。
+
+**POC（tests/migration_so_demo.rs，4 项全过）**：忠实改写 so_demo 两个真实脚本——
+- `t_wifi.rhai` → 顶层语句包 `main()`，标量面直接接住；`OK\t/ERR\t` 契约模拟（编译错与宿主 Err 双通道）；root 总闸切换验证同一字节码随宿主状态变化。
+- `bind_verify.rhai` → `img_screen_size/img_crop` 的 Map → **(w,h)/(x,y,w,h) 元组**；`img_find_all/img_find_bind` 的 Array<Map> → **Opaque + count/name/x/y 索引 getter**；try/catch(win<0) → **(ok, err) 探针二元组**；`to_string()` → `to_str()`；9 行日志逐一断言与原流程一致。API 形状改写记录：`img_find_bind` 的"伴随模板三元组数组"参数在全部 3 个真实调用点都只传 1 个伴随，标量化属过度泛化的回收。
+- Task 句柄 → Opaque + RefCell/Cell 内部可变性（rhai `&mut Task` 方法调用的对应物）。
+- 2–8 元组往返直测（返回值、`.N` 索引、元组字面量作宿主实参、FromValue 校验）。
+
+**D-035-1 · 测试脚本自踩桥接语义**：`register_fn!(engine, "sum3", ((i64, i64, i64)) -> i64, …)` 的 `((…))` 被 `$a:ty` 捕获为**一个元组类型参数**——脚本须传元组字面量 `sum3((a, b, c))`。这是宏语法的正确行为（元组作宿主参数正是 FromValue 的用途），测试照此修正。
+
+**量化结论（分层可行性，详见对话报告）**：
+- so_demo：**可接住，试点首选**。直接接住 ~120 个标量/str/bool 函数；元组化 ~15 类固定记录；Opaque+getter ~8 类变长记录集；Kotlin/JNI 层零改动。集成层需对齐：线程模型（rhai sync 跨线程缓存 vs miniscript `!Send` 每线程 Engine）、取消策略（rhai on_progress 协作取消 vs miniscript gas 硬中止 + 宿主函数内自查）、Scope 常量（9 颜色改零参函数，ARGS 0 使用可砍）。
+- rhai_demo：**可接住但为宿主 API v2 工程**。~110 个标量函数直接接住；Task/Page 句柄天然映射 Opaque；~67 个 Map/Array 返回 + exec(Map 入参) 需重设计；253 个 try/catch 与 34 个脚本（6905 行）全部重写；diag.rhai 留作最后回归网；两处隐蔽语义点（字符串原地改、max_operations 长挂假设）。
+
+**验证**：177 项全绿（175 单测/集成 + 2 doctest）、零警告。
 
 ---
 

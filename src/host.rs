@@ -191,34 +191,49 @@ impl<T: HostResult> HostResult for std::result::Result<T, Error> {
 
 // Fixed-arity tuples are the script's multi-value type. Variable-length `Vec`
 // is deliberately not supported: a host signature must have a static shape.
-macro_rules! impl_tuple2 {
-    ($a:ident, $b:ident) => {
-        impl<$a: ScriptType + FromValue, $b: ScriptType + FromValue> ScriptType for ($a, $b) {
+// Arity 2 was the original limit (ADR-013 recorded "host tuples stop at 2,
+// use Opaque beyond that"); that was a bridging-layer gap, not a language one
+// — the script language itself accepts tuples up to MAX_OPERANDS — so the
+// bridge now covers 2–8. Collections of unknown length (record lists) still
+// belong in `Opaque<T>` + indexed getters.
+macro_rules! impl_tuple_n {
+    ($n:literal; $($idx:tt => $T:ident),+ $(,)?) => {
+        impl<$($T: ScriptType),+> ScriptType for ($($T,)+) {
             fn script_ty() -> Ty {
-                Ty::Tuple(vec![<$a as ScriptType>::script_ty(), <$b as ScriptType>::script_ty()])
+                Ty::Tuple(vec![$(<$T as ScriptType>::script_ty()),+])
             }
         }
-        impl<$a: FromValue, $b: FromValue> FromValue for ($a, $b) {
+        impl<$($T: FromValue),+> FromValue for ($($T,)+) {
             fn from_value(v: &Value) -> Result<Self> {
                 match v {
-                    Value::Tuple(items) if items.len() == 2 => {
-                        Ok(($a::from_value(&items[0])?, $b::from_value(&items[1])?))
+                    Value::Tuple(items) if items.len() == $n => {
+                        Ok(($( <$T as FromValue>::from_value(&items[$idx])?, )+))
                     }
-                    _ => Err(Error::runtime(format!("expected 2-tuple, found {}", v.ty()))),
+                    _ => Err(Error::runtime(format!(
+                        "expected {}-tuple, found {}",
+                        $n,
+                        v.ty()
+                    ))),
                 }
             }
         }
-        impl<$a: HostResult, $b: HostResult> HostResult for ($a, $b) {
+        impl<$($T: HostResult),+> HostResult for ($($T,)+) {
             fn script_ty() -> Ty {
-                Ty::Tuple(vec![<$a as HostResult>::script_ty(), <$b as HostResult>::script_ty()])
+                Ty::Tuple(vec![$(<$T as HostResult>::script_ty()),+])
             }
             fn into_value(self) -> Result<Value> {
-                Ok(Value::Tuple(vec![self.0.into_value()?, self.1.into_value()?]))
+                Ok(Value::Tuple(vec![$(self.$idx.into_value()?),+]))
             }
         }
     };
 }
-impl_tuple2!(A, B);
+impl_tuple_n!(2; 0 => A, 1 => B);
+impl_tuple_n!(3; 0 => A, 1 => B, 2 => C);
+impl_tuple_n!(4; 0 => A, 1 => B, 2 => C, 3 => D);
+impl_tuple_n!(5; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E);
+impl_tuple_n!(6; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E, 5 => F);
+impl_tuple_n!(7; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E, 5 => F, 6 => G);
+impl_tuple_n!(8; 0 => A, 1 => B, 2 => C, 3 => D, 4 => E, 5 => F, 6 => G, 7 => H);
 
 /// Register a host function with a Rust-typed signature.
 ///
