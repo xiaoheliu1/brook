@@ -597,6 +597,39 @@ fn one_engine_per_thread() {
 }
 
 // ===========================================================================
+// §2.4 补充：整数边界（FAQ Q13）
+// ===========================================================================
+
+#[test]
+fn integer_boundaries() {
+    let engine = Engine::new();
+
+    // 42 只是教程表格里的例子——i64 装得下的都合法
+    let script = engine.load_str("func f() { 9223372036854775807 }").unwrap();
+    assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(i64::MAX));
+
+    let script = engine.load_str("func f() { 1234567890123 }").unwrap();
+    assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(1234567890123));
+
+    // 字面量超范围 → 编译报错
+    let err = engine.load_str("func f() { 9223372036854775808 }").unwrap_err();
+    assert!(err.message.contains("integer literal overflows i64"), "{}", err.message);
+
+    // 最小值写不成字面量：先解析数字（溢出）再取负
+    let err = engine.load_str("func f() { -9223372036854775808 }").unwrap_err();
+    assert!(err.message.contains("integer literal overflows i64"), "{}", err.message);
+
+    // 运算溢出 → 运行时报错，不回绕
+    let script = engine.load_str("func f(x) { x + 1 }").unwrap();
+    let err = engine.call(&script, "f", vec![Value::I64(i64::MAX)]).unwrap_err();
+    assert!(err.message.contains("i64 add overflow"), "{}", err.message);
+
+    let script = engine.load_str("func f() { 9223372036854775807 * 2 }").unwrap();
+    let err = engine.call(&script, "f", vec![]).unwrap_err();
+    assert!(err.message.contains("i64 mul overflow"), "{}", err.message);
+}
+
+// ===========================================================================
 // §5 FAQ
 // ===========================================================================
 
