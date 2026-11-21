@@ -26,7 +26,12 @@ pub const MAGIC: &[u8; 4] = b"VTBC";
 /// (Q15) instead of an empty tuple type, so a v2 cache built for a source
 /// containing `()` would serve stale semantics after a compiler upgrade — the
 /// version gate forces a cheap rebuild instead.
-pub const VERSION: u16 = 3;
+/// v3 改动不涉及 wire 布局：`()` 字面量编译为 `Ty::Unit`（Q15），版本门
+/// 强制重建防止旧缓存以 `Tuple([])` 语义存活。
+/// v4 新增依赖清单段（约定式 import，ADR-017）：记录主脚本 import 的
+/// 文件路径与内容 hash，`load_cached`/`compile_cached` 加载时逐一校验，
+/// 任一依赖变更 → 缓存失效重建。wire 布局仅在末尾追加，VERSION 3→4。
+pub const VERSION: u16 = 4;
 
 /// (name, slot id, params, ret), sorted by name. `CallHost` instructions embed
 /// the slot id, so both the set of functions and their order must be stable.
@@ -469,6 +474,14 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
         w.str(name);
         w.u16(*id);
     }
+
+    // 依赖清单（约定式 import，ADR-017）：路径 + 内容 hash。
+    // load_cached / compile_cached 加载时逐一校验，任一依赖变更即失效重建。
+    w.u32(script.deps.len() as u32);
+    for (path, hash) in &script.deps {
+        w.str(path);
+        w.u64(*hash);
+    }
     w.0
 }
 
@@ -532,6 +545,17 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
         let n = r.str()?;
         ids.insert(n, r.u16()?);
     }
+
+    // 依赖清单（v4，约定式 import）：路径 + 内容 hash。
+    let n_deps = r.u32()? as usize;
+    if n_deps > bytes.len() { return Err(Error::io("cache: implausible dependency count")); }
+    let mut deps = Vec::with_capacity(n_deps);
+    for _ in 0..n_deps {
+        let path = r.str()?;
+        let hash = r.u64()?;
+        deps.push((path, hash));
+    }
+
     if r.pos != bytes.len() {
         return Err(Error::io("cache: trailing bytes"));
     }
@@ -546,5 +570,6 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
         // `.sbc` does not embed the source; a caller that has it (the
         // `compile_cached` path) fills this in so `Script::report` works.
         source: Rc::from(""),
+        deps,
     })
 }

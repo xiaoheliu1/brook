@@ -2,8 +2,18 @@
 
 use crate::span::Span;
 
+/// 顶层 `import "名字"` 声明（约定式导入，见 HOST_GUIDE §12.1）。
+/// 仅编译期指令：解析阶段被引擎消化（载入库文本合并进本单元），
+/// 不进入可执行流。
+#[derive(Debug, Clone)]
+pub struct ImportDecl {
+    pub name: String,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct Program {
+    pub imports: Vec<ImportDecl>,
     pub funcs: Vec<FuncDecl>,
 }
 

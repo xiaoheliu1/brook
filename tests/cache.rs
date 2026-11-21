@@ -175,6 +175,7 @@ fn every_opcode_roundtrips_exactly() -> vitul::Result<()> {
         source_hash: cache::hash_source("opcodes"),
         // Hand-built scripts carry no source; `.sbc` round-trips drop it too.
         source: Rc::from(""),
+        deps: Vec::new(),
     };
     let bytes = cache::encode(&script, &fp);
     let back = cache::decode(&bytes, &fp)?;

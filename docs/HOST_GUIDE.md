@@ -162,9 +162,42 @@ std::thread::spawn(move || {
 
 `call(&Script)` 与 `reload(&mut Script)` 借用规则天然互斥，无需锁。多线程宿主（JNI 回调任意线程）= 每线程本地缓存 Engine，或任务队列单线程执行。
 
-## 12. 公共函数库（宿主拼接）
+## 12. 公共函数库（约定式 import）
 
-语言无 `import`（这是语言现状，脚本教程 §11 已如实告知"当前不支持"——本节的拼接是**宿主侧自行实现**的复用手段，不是语言能力）；宿主侧就是**读几份源码拼成一份再编译**：
+**语言已内置 import（ADR-017）**：脚本作者写 `import "common"`，引擎从「当前脚本所在目录的 `common.vt`」载入并合并编译——宿主默认**零配置**。脚本作者视角见 TUTORIAL.md §4.8。
+
+宿主侧的配置只有两种（都是可选的）：
+
+```rust
+// 便捷式：import "common" → <目录>/common.vt
+let engine = Engine::new().set_import_dir("scripts/lib");
+
+// 完全自定义：assets / DB / 加密源码——名字到源码的映射由宿主决定
+let engine = Engine::new().set_import_resolver(|name| {
+    if name.contains("..") { return Err(...); }   // 可在宿主再加码路径护栏
+    Ok(fetch_from_assets(name)?)
+});
+```
+
+不配置时，import 只能解析**从文件加载**的脚本（相对脚本自身目录）；内存脚本（load_str）写 import 会明确报错。
+
+缓存：`.sbc`（v4）记录依赖清单（路径 + hash），`load_cached` / `compile_cached` 加载时逐一校验——**任一依赖文件改一个字，依赖它的脚本缓存自动失效重建**；`reload` 重新解析 import 同理。
+
+**历史方案（备选）**：宿主拼接——读几份源码拼成一份再编译（下面的 `load_with_libs`）。在语言没有 import 的时代它是唯一解；现在 import 已内置，拼接仅在「宿主想完全控制合并内容」时才有意义：
+
+```rust
+fn load_with_libs(engine: &Engine, lib_paths: &[&str], script_path: &str)
+    -> vitul::Result<vitul::Script>
+{
+    let mut combined = String::new();
+    for p in lib_paths {
+        combined.push_str(&std::fs::read_to_string(p)?);
+        combined.push('\n');
+    }
+    combined.push_str(&std::fs::read_to_string(script_path)?);
+    engine.load_cached(&combined)
+}
+```
 
 ```rust
 fn load_with_libs(engine: &Engine, lib_paths: &[&str], script_path: &str)

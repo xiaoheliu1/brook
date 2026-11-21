@@ -12,6 +12,7 @@ pub enum TokenKind {
 
     // Keywords
     Func,
+    Import,
     Let,
     If,
     Else,

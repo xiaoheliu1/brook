@@ -19,7 +19,14 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0, line: 1, col: 1, prev_dot: false }
+        Self::new_with_offset(src, 1)
+    }
+
+    /// 合并编译用：`first_line` 是本段源码在拼接视图中的起始行号（1-based）。
+    /// 约定式 import 会把多份源码按依赖顺序拼成一个编译单元，
+    /// 每段的行号必须接续前一段，报错行号才能与拼接视图对齐。
+    pub fn new_with_offset(src: &'a str, first_line: usize) -> Self {
+        Self { src: src.as_bytes(), pos: 0, line: first_line, col: 1, prev_dot: false }
     }
 
     pub fn tokenize(mut self) -> Result<Vec<Token>> {
@@ -157,6 +164,7 @@ impl<'a> Lexer<'a> {
             let text = std::str::from_utf8(&self.src[start..self.pos]).unwrap().to_string();
             let kind = match text.as_str() {
                 "func" => TokenKind::Func,
+                "import" => TokenKind::Import,
                 "let" => TokenKind::Let,
                 "if" => TokenKind::If,
                 "else" => TokenKind::Else,

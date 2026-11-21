@@ -56,13 +56,61 @@ impl Parser {
     }
 
     pub fn parse(mut self) -> Result<Program> {
+        let mut imports = Vec::new();
         let mut funcs = Vec::new();
         self.skip_newlines();
+        // 头部导入区：`import "名字"` 集中在所有函数定义之前（依赖声明，
+        // 由引擎在编译期载入合并——见 HOST_GUIDE §12.1）。函数定义之后
+        // 再出现 import 一律报错，保证依赖声明集中在文件头。
+        while matches!(self.peek(), TokenKind::Import) {
+            imports.push(self.parse_import()?);
+            self.skip_newlines();
+        }
         while !self.at_eof() {
+            if matches!(self.peek(), TokenKind::Import) {
+                return Err(Error::parse(
+                    "import 必须写在所有函数定义之前",
+                    self.peek_span(),
+                ));
+            }
             funcs.push(self.parse_func()?);
             self.skip_newlines();
         }
-        Ok(Program { funcs })
+        Ok(Program { imports, funcs })
+    }
+
+    /// 解析 `import "名字"`。其后必须是换行或文件结束（本语言无分号，
+    /// 声明行到此为止）。
+    fn parse_import(&mut self) -> Result<ImportDecl> {
+        let kw = self.expect(TokenKind::Import)?;
+        let name = match self.peek().clone() {
+            TokenKind::Str(s) if !s.is_empty() => {
+                self.bump();
+                s
+            }
+            TokenKind::Str(_) => {
+                return Err(Error::parse("import 路径不能为空", self.peek_span()))
+            }
+            _ => {
+                return Err(Error::parse(
+                    "expected import 路径字符串，如 \"common\"",
+                    self.peek_span(),
+                ))
+            }
+        };
+        match self.peek() {
+            TokenKind::Newline | TokenKind::Eof => {}
+            _ => {
+                return Err(Error::parse(
+                    "expected newline after import 声明（import 之后应换行）",
+                    self.peek_span(),
+                ))
+            }
+        }
+        Ok(ImportDecl {
+            name,
+            span: kw.span.to(self.prev_span()),
+        })
     }
 
     // ---- primitives ----

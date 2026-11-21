@@ -231,7 +231,8 @@ let restored = engine.script_from_bytes(&bytes)?;
 ### 3.8 语法形式化（核心产生式，待实现时细化）
 
 ```
-program    := func_decl*
+program    := import_decl* func_decl*
+import_decl := "import" string            // 仅文件头；编译期载入合并（ADR-017）
 func_decl  := "func" ident "(" (param ("," param)*)? ")" ("->" type)? block
 stmt       := "let" ident "=" expr | expr | "return" expr?
             | if_stmt | while_stmt | for_stmt | block
@@ -254,7 +255,8 @@ call       := ident "(" (expr ("," expr)*)? ")"
 | 函数 | 定义、调用、递归、return、元组返回 | v1 核心 |
 | 宿主互操作 | 注册函数直调、不透明句柄、类型编译期校验 | v1 核心 |
 | 扩展 | 数组、字典、字符串插值 | v2（含分配开销） |
-| 永久不支持 | 动态类型、闭包、类/继承、异常、模块、并发、eval、union 类型 | — |
+| 模块复用 | `import "名字"` 约定式合并（无命名空间，见 ADR-017） | v1.1 |
+| 永久不支持 | 动态类型、闭包、类/继承、异常、命名空间模块、运行时链接、并发、eval、union 类型 | — |
 
 ---
 
@@ -457,6 +459,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **验证清单**：① ARM 真机 execmem 探测矩阵（含不同 OEM / targetSdk）；② 冷启动耗时与峰值内存；③ 非 fib 的业务脚本收益；④ JIT → VM 回退路径正确性与 panic 边界。
 
 ### ADR-013 · 从 rhai 迁移的可行性：宿主适配可行，语言缺口是边界
+- **修订（2026-11-21，ADR-017）**：本 ADR 记录的「`import` 触碰引擎」开放项**已解除**——约定式 import 落地（见 ADR-017）。rhai_demo 的 5 个 `import "common" as lib` 脚本迁移路径：common.rhai → common.vt，`lib::函数` 调用改为直接调用（无命名空间，撞名编译报错兜底）。
 - **日期**：2026-11-20
 - **状态**：已验证（概念验证，非生产迁移）
 - **背景**：存在用本项目替换 `rhai_demo`（34 个脚本、约 208 个 `register_fn`、大量 Map/Array 返回）的诉求。问题被界定为「宿主能力不变，脚本可改，能否完全迁移」。
@@ -509,6 +512,21 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **证据**：rhai_demo 34 脚本全为任务型；其 REPL 为命令式（非表达式求值）；so_demo 的 ARGS 注入 50 脚本 0 使用——顶层流的伴生需求实际为零
 - **影响**：checker 重复定义报错、`.sbc` 格式、reload 语义、per-thread 并发模型均以此为基础；文档表述见 TUTORIAL.md §1（两条结构规则）
 
+### ADR-017 · 约定式 import：脚本级公共函数复用
+- **日期**：2026-11-21
+- **状态**：已实现（`tests/import_stmt.rs` 11 项 + 全量回归）
+- **背景**：ADR-013 将 `import` 记录为「触碰引擎的开放项」；D-041 暴露其反面——没有该能力时教程无法教函数复用，且用户实测"如果你的宿主提供了"假设句式造成半天误导。用户定性：迁移前落地、**脚本作者零配置**（像 Go 同目录那样，放个文件就能用）。
+- **决策**：
+  1. **语法**：`import "名字"` 仅文件头（所有 func 之前）；引入的函数进全局函数集，**无命名空间**（直接 `retry(3)`，不写 `common.retry(3)`——撞名编译报错兜底）
+  2. **解析（约定式）**：当前脚本所在目录的 `<名字>.vt`；子路径允许（`import "lib/net"` → `lib/net.vt`，相对**导入者**目录）；`..` / 绝对路径 / `\` / 盘符全部编译期禁止（永远锁在脚本目录树内——与 so_demo fs 护栏同一哲学）
+  3. **逃生舱**：`set_import_dir`（便捷式）与 `set_import_resolver`（回调，assets/DB/加密源码）覆盖特殊部署；未配置时 load_str 里的 import 明确报错（D-041 规则：不存在就说不存在）
+  4. **实现**：文本拼接进主流（各单元按拼接视图行号偏移解析，`Lexer::new_with_offset`）→ checker/codegen/cache 全线复用；loaded/stack 双集合（重复 import 幂等去重 vs A→B→A 真循环报错）；上限：单次编译 ≤32 单元、链深 ≤8、单份 ≤1 MiB
+  5. **缓存**：`.sbc` v4 追加依赖清单（解析路径 + hash），`load_cached`/`compile_cached` 加载时逐一校验——任一依赖改一字，依赖脚本缓存自动失效重建
+- **为什么不做命名空间 / 运行时链接**（记录，非永久拒绝）：命名空间要动 parser/checker/codegen 三层，收益只是名字前缀——全局集 + 撞名报错覆盖需求（so_demo 50 脚本实测撞名极少）；运行时链接省下的重编译以微秒计，跨单元签名解析/调用号空间/跨单元报错以天计。等真实需求触发再议
+- **代价**：parser +30 行 / loader +120 行 / cache +40 行；`.sbc` VERSION 3→4（追加依赖清单段）；教程 §4.8 新章节
+- **证据**：`tests/import_stmt.rs` 11 项（同目录/子路径/相对导入者解析/顺序无关/重复幂等/循环报错/撞名报错/路径护栏/load_str 报错/resolver 逃生舱/缓存失效/热重载）+ 全量回归
+- **影响**：parser.rs / lexer.rs / token.rs / ast.rs / engine.rs / cache.rs（VERSION 4）/ 文档；C ABI 无变化；**与 D-041 的关系**：能力落地后 §4.8 才成为合法章节——D-041 的「不写不存在的能力」规则持续有效
+
 ---
 
 ## 第八章 · 开放问题
@@ -539,6 +557,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 > 倒序追加。格式：`日期 · 变更内容 · 影响范围`
 
+- **2026-11-21** · **约定式 import 落地（ADR-017 / D-042）**：语言新增 `import "名字"` 语句（仅文件头）——引擎从脚本所在目录（或 set_import_dir/set_import_resolver 配置）载入库源码，文本拼接合并编译；重复 import 幂等去重、循环 import 编译报错、撞名报错、`..`/绝对路径编译期禁止（护栏引擎强制）；`.sbc` v4 追加依赖清单（路径+hash），加载时逐一校验，任一依赖改一字依赖脚本缓存自动失效；load_str 写 import 明确报错（D-041 规则）。parser +30 / loader +120 / cache +40 / 测试 11 项，**217 项全绿、零警告**；教程 §4.7→§4.8 重写为真实能力、HOST_GUIDE §12 重写（拼接降为备选）· 第三章 3.8、第七章 ADR-017、第七章 ADR-013 修订注、第九章、parser.rs / lexer.rs / token.rs / ast.rs / engine.rs / cache.rs / tests/import_stmt.rs
 - **2026-11-21** · **教程规则收紧：不写不存在的能力（D-041）**：用户按教程 §4.7「公共函数库（如果你的宿主提供了）」实测失败——该能力当前不存在，假设句式（"如果你的宿主提供了"）误导用户浪费半天。修正：§4.7 删除；§4.6 收尾直说「可调用函数 = 13 内置 + 宿主注册，无公共库、无跨脚本调用；复用逻辑 = 复制粘贴或请宿主做成宿主函数」；§11 import 行同步「当前不支持」；HOST_GUIDE §12/12.1 加定位警示（两模式均为宿主侧自行实现，非语言能力，别写进脚本教程）。**教训**：教程只写当前存在的能力；"如果宿主提供了"这类假设句式一律禁止——读者没有义务分辨哪些是假设哪些是现实。测试 26 项教程测试全过 · docs/TUTORIAL.md、docs/HOST_GUIDE.md
 - **2026-11-21** · **项目更名：`miniscript` → `vitul`（D-040）**：动机——crates.io 的 `miniscript` 已被比特币生态 rust-miniscript 占用（发布资格阻塞）。候选经 crates.io 可用性批量核查 + 撞名搜索三轮筛选（用户先后提出 Verse——与 Epic Games 的 Fortnite/UEFN 脚本语言撞名、Spar——crates.io 已占用且撞学术 Spar 并行语言），最终定名 **`vitul`**（crates.io 可用、技术领域零撞名——搜索仅人名与实体图书馆），扩展名 `.ms` → `.vt`，字节码魔数 `MSBC` → `VTBC`（旧缓存自然失效，格式布局不变）。全链路替换 32 文件 ~180 处（Cargo/源码/测试/文档/脚本）；C ABI 的 `ms_*` 符号与 `MS_ERR_*`/`MS_VAL_*` 常量**保留不改**（ABI 稳定优先，前缀作为历史遗留记录）。验证：206 项测试全绿、零警告 · 全部文件
 - **2026-11-21** · **第二轮全盘复审（D-039）**：对自己全天新写的代码做新鲜眼光复查——**修复 1 处**：`msval_to_value` 的 STR 分支缺空指针检查（`len > 0 && s == null` 会 `from_raw_parts(null)`——调用契约虽允许 UB，但 ffi.rs 其他指针入口全部有 null 检查，防御姿态不一致）+ 测试钉死；教程 §2.4 浮点字面量措辞澄清（`.5` 不支持——点号开头是元组索引语法，需 `0.5`）。**复查干净项**：typecheck pass 1 三重检查顺序、lexer 指数门控位置、parser If 臂深度计数、`impl_tuple_n` 单一来源（impl_tuple2 已被替换无残留）、Failure::of 无残留引用、无 TODO、0 警告。测试 205→**206 项全绿** · ffi.rs / tests/ffi.rs / docs/TUTORIAL.md
