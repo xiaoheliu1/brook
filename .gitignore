@@ -1,0 +1,13 @@
+# Build artifacts (regenerate with cargo / scripts/android_build.sh)
+/target/
+/jniLibs/
+
+# Bytecode caches produced by tests and compile_cached
+*.sbc
+
+# Tool state (not project code)
+/.workbuddy/
+
+# Windows junk
+Thumbs.db
+desktop.ini

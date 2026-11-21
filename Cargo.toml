@@ -1,0 +1,31 @@
+[package]
+name = "miniscript"
+version = "0.1.0"
+edition = "2021"
+description = "A minimal, statically-typed embedded scripting language for Rust hosts"
+license = "MIT OR Apache-2.0"
+
+[lib]
+# `rlib` is what Rust hosts link; `cdylib` produces libminiscript.so for
+# Android JNI packaging (see scripts/android_build.sh). Neither changes the
+# library's public API.
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "engine"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+# NOTE: the engine's "a script never unwinds into the host" guarantee relies on
+# `panic = "unwind"` (the default). Building with `panic = "abort"` still works,
+# but a panicking host callback then aborts the process instead of returning an
+# `Err` from `Engine::call`.

@@ -1,0 +1,10 @@
+# Normalize line endings: store LF in the repo, let git manage working-tree
+# conversion. Shell scripts must stay LF even on Windows checkouts — CRLF
+# breaks bash (`bad interpreter` / `\r` in every line).
+* text=auto
+*.sh text eol=lf
+*.rs text
+*.md text
+*.toml text
+*.ms text
+*.lock text
