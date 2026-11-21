@@ -1,4 +1,4 @@
-//! vitul — a minimal, statically-typed embedded scripting language.
+//! brook — a minimal, statically-typed embedded scripting language.
 //!
 //! The default execution path is a type-specialized register VM. A script is
 //! parsed, type-checked, and lowered to bytecode by [`Engine`]; [`Engine::call`]
@@ -23,7 +23,7 @@
 //! takes `&Script`, so safe Rust already rules out reloading mid-call.
 //!
 //! ```no_run
-//! use vitul::{register_fn, Engine, Result, Value};
+//! use brook::{register_fn, Engine, Result, Value};
 //!
 //! fn main() -> Result<()> {
 //!     let mut engine = Engine::new();

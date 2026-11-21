@@ -1,11 +1,11 @@
 //! 文档示例的可执行集：
 //! * `docs/TUTORIAL.md`（脚本教程）——脚本行为由这里与各主题测试钉死
 //! * `docs/HOST_GUIDE.md`（宿主集成指南）——宿主代码示例对应本文件的 #[test]
-//! * `docs/patrol.vt`——教程 §9 的完整示例脚本，本文件原样读取并执行
+//! * `docs/patrol.bk`——教程 §9 的完整示例脚本，本文件原样读取并执行
 //!
 //! 跑法：`cargo test --test tutorial_examples`
 
-use vitul::{register_fn, Engine, Error, Opaque, Value};
+use brook::{register_fn, Engine, Error, Opaque, Value};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -413,8 +413,8 @@ fn errors_and_reports() {
     // 在第三行的 `}` 处暴露，所以位置是 3:1。
     let src = "func go(x) {\n  x +\n}";
     let cerr = engine.load_str(src).unwrap_err();
-    let creport = cerr.report(src, "broken.vt");
-    assert!(creport.contains("--> broken.vt:3:1"), "{}", creport);
+    let creport = cerr.report(src, "broken.bk");
+    assert!(creport.contains("--> broken.bk:3:1"), "{}", creport);
 }
 
 // ===========================================================================
@@ -560,7 +560,7 @@ fn tuple_inference_and_host_boundary() {
 fn hot_reload() {
     let dir = std::env::temp_dir().join(format!("ms_tutorial_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("greet.vt");
+    let path = dir.join("greet.bk");
     std::fs::write(&path, "func greet(name: str) { \"hello \" + name }").unwrap();
 
     let engine = Engine::new();
@@ -613,7 +613,7 @@ fn safety_limits() {
     // （宿主函数本体一定 panic，用 raw API 注册——类型化宏要求可推导的返回类型）
     let mut engine = Engine::new();
     engine
-        .register_fn("boom", vec![], vitul::ty::Ty::Unit, |_| panic!("boom!"))
+        .register_fn("boom", vec![], brook::ty::Ty::Unit, |_| panic!("boom!"))
         .unwrap();
     let script = engine.load_str("func go() { boom() }").unwrap();
     let err = engine.call(&script, "go", vec![]).unwrap_err();
@@ -682,7 +682,7 @@ fn shared_library_via_host_concat() {
 
     let mut engine2 = Engine::new();
     engine2
-        .register_fn("double", vec![], vitul::ty::Ty::I64, |_| Ok(Value::I64(0)))
+        .register_fn("double", vec![], brook::ty::Ty::I64, |_| Ok(Value::I64(0)))
         .unwrap();
     let err = engine2.load_str("func double(n) { n }").unwrap_err();
     assert!(err.message.contains("by the host"), "{}", err.message);
@@ -831,7 +831,7 @@ fn integer_boundaries() {
 }
 
 // ===========================================================================
-// §9 完整示例：巡检任务（docs/patrol.vt 原样执行）
+// §9 完整示例：巡检任务（docs/patrol.bk 原样执行）
 // ===========================================================================
 
 #[test]
@@ -859,7 +859,7 @@ fn patrol_complete_example() {
     .unwrap();
 
     // 教程 §9 的脚本文件原样读取执行——文档与代码永不分叉
-    let src = include_str!("../docs/patrol.vt");
+    let src = include_str!("../docs/patrol.bk");
     let script = engine.load_str(src).unwrap();
     assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::Unit);
 

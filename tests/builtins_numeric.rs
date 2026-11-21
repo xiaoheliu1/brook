@@ -6,8 +6,8 @@
 //! and not a new opcode — but it does add three new builtin ids, so the `.sbc`
 //! path is covered here too.
 
-use vitul::ty::Ty;
-use vitul::{Engine, Value};
+use brook::ty::Ty;
+use brook::{Engine, Value};
 
 fn call(src: &str, name: &str, args: Vec<Value>) -> Value {
     let engine = Engine::new();

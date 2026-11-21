@@ -1,12 +1,12 @@
 [package]
-name = "vitul"
+name = "brook"
 version = "0.1.0"
 edition = "2021"
 description = "A minimal, statically-typed embedded scripting language for Rust hosts"
 license = "MIT OR Apache-2.0"
 
 [lib]
-# `rlib` is what Rust hosts link; `cdylib` produces libvitul.so for
+# `rlib` is what Rust hosts link; `cdylib` produces libbrook.so for
 # Android JNI packaging (see scripts/android_build.sh). Neither changes the
 # library's public API.
 crate-type = ["rlib", "cdylib"]

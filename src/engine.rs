@@ -196,7 +196,7 @@ pub struct Engine {
     max_depth: usize,
     /// Cap on bytes a script may allocate inside the VM (strings + tuple payloads).
     max_heap: u64,
-    /// 约定式 import 的查找目录：`import "common"` → `<目录>/common.vt`。
+    /// 约定式 import 的查找目录：`import "common"` → `<目录>/common.bk`。
     import_dir: Option<PathBuf>,
     /// 约定式 import 的自定义解析器——设置时优先于 `import_dir`，
     /// 宿主决定 `import "名字"` 的源码内容（assets / DB / 内置字符串）。
@@ -265,7 +265,7 @@ impl Engine {
         self
     }
 
-    /// 约定式 import 的目录：`import "common"` → `<目录>/common.vt`。
+    /// 约定式 import 的目录：`import "common"` → `<目录>/common.bk`。
     /// 与 set_import_resolver 二选一（设置了 resolver 时优先生效）。
     pub fn set_import_dir<P: AsRef<Path>>(mut self, dir: P) -> Self {
         self.import_dir = Some(dir.as_ref().to_path_buf());
@@ -711,7 +711,7 @@ impl<'a> ImportLoader<'a> {
                     span,
                 )
             })?;
-        let path = dir.join(format!("{name}.vt"));
+        let path = dir.join(format!("{name}.bk"));
         let meta = path
             .metadata()
             .map_err(|e| Error::io(format!("找不到 import 文件 {}: {}", path.display(), e)))?;

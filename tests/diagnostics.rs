@@ -1,6 +1,6 @@
 //! Diagnostics: source locations and rendered error reports.
 
-use vitul::Engine;
+use brook::Engine;
 
 /// Columns are character positions, not byte offsets. A line containing CJK
 /// text used to report the byte column, so the caret pointed past the token.
@@ -81,7 +81,7 @@ fn compile_errors_have_no_trace() {
 /// A host function's own error kind survives the trip through the VM.
 #[test]
 fn host_error_kind_is_preserved() {
-    use vitul::{register_fn, Error, ErrorKind};
+    use brook::{register_fn, Error, ErrorKind};
     let mut engine = Engine::new();
     register_fn!(engine, "fail_io", () -> std::result::Result<(), Error>, || {
         Err(Error::io("disk gone"))
@@ -129,10 +129,10 @@ fn compile_error_shows_the_offending_line() {
     let engine = Engine::new();
     let src = "func f() -> i64 {\n    let s = \"中文\" + 1\n}\n";
     let err = engine.load_str(src).unwrap_err();
-    let report = err.report(src, "price.vt");
+    let report = err.report(src, "price.bk");
 
     assert!(report.starts_with("[type] error at 2:18:"), "{}", report);
-    assert!(report.contains("  --> price.vt:2:18"), "{}", report);
+    assert!(report.contains("  --> price.bk:2:18"), "{}", report);
     assert!(report.contains("2 |     let s = \"中文\" + 1"), "{}", report);
     // Two CJK glyphs are two columns each in a terminal; the caret must follow
     // the rendered width, not the character count.
@@ -144,7 +144,7 @@ fn tabs_are_expanded_before_placing_the_caret() {
     let engine = Engine::new();
     let src = "func f() -> i64 {\n\tlet s = \"x\" + 1\n}\n";
     let err = engine.load_str(src).unwrap_err();
-    let report = err.report(src, "tab.vt");
+    let report = err.report(src, "tab.bk");
     assert_eq!(caret_alignment(&report, 2), (16, 16), "{}", report);
 }
 
@@ -185,8 +185,8 @@ fn cached_script_reports_against_source() {
     std::fs::create_dir_all(&dir).unwrap();
     let cache = dir.join("diag.sbc");
     let src = "func f() -> i64 {\n    1 / 0\n}\n";
-    let script = engine.compile_cached(src, "diag.vt", &cache).unwrap();
+    let script = engine.compile_cached(src, "diag.bk", &cache).unwrap();
     let err = engine.call(&script, "f", vec![]).unwrap_err();
-    assert!(script.report(&err).contains("diag.vt:2:7"), "{}", script.report(&err));
+    assert!(script.report(&err).contains("diag.bk:2:7"), "{}", script.report(&err));
     let _ = std::fs::remove_file(&cache);
 }

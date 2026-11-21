@@ -8,7 +8,7 @@
 //!   but did not unify with `Ty::Unit`. The literal, the type annotation and
 //!   the reference interpreter now all agree on Unit.
 
-use vitul::{Engine, ErrorKind, Value};
+use brook::{Engine, ErrorKind, Value};
 
 fn compile_err(src: &str) -> String {
     match Engine::new().load_str(src) {
@@ -52,7 +52,7 @@ fn host_name_collision_message_is_distinct() {
     // keeps its own message.
     let mut engine = Engine::new();
     engine
-        .register_fn("total", vec![], vitul::ty::Ty::I64, |_| Ok(Value::I64(0)))
+        .register_fn("total", vec![], brook::ty::Ty::I64, |_| Ok(Value::I64(0)))
         .unwrap();
     let err = engine.load_str("func total() { 1 }").unwrap_err();
     assert!(err.message.contains("already defined by the host"), "got: {}", err.message);

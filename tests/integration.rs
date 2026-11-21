@@ -1,7 +1,7 @@
-use vitul::engine::Engine;
-use vitul::error::Result;
-use vitul::ty::Ty;
-use vitul::value::Value;
+use brook::engine::Engine;
+use brook::error::Result;
+use brook::ty::Ty;
+use brook::value::Value;
 
 #[test]
 fn end_to_end_arithmetic_and_if() -> Result<()> {
@@ -25,7 +25,7 @@ fn end_to_end_arithmetic_and_if() -> Result<()> {
 #[test]
 fn end_to_end_recursion() -> Result<()> {
     let engine = Engine::new();
-    let script = engine.load_file("examples/fib.vt")?;
+    let script = engine.load_file("examples/fib.bk")?;
     assert_eq!(engine.call(&script, "fib", vec![Value::I64(10)])?, Value::I64(55));
     Ok(())
 }
@@ -94,7 +94,7 @@ fn end_to_end_host_function_and_handle() -> Result<()> {
     )?;
     engine.register_type::<Order>()?;
 
-    let script = engine.load_file("examples/risk.vt")?;
+    let script = engine.load_file("examples/risk.bk")?;
     let order = Value::handle(Order { total: 200.0, vip: true });
     let result = engine.call(&script, "check", vec![order, Value::F64(1000.0)])?;
     assert_eq!(
@@ -106,9 +106,9 @@ fn end_to_end_host_function_and_handle() -> Result<()> {
 
 #[test]
 fn hot_reload_swaps_implementation() -> Result<()> {
-    let dir = std::env::temp_dir().join(format!("vitul_reload_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("brook_reload_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("rule.vt");
+    let path = dir.join("rule.bk");
     std::fs::write(&path, "func price(x) { x * 2 }\n").unwrap();
 
     let engine = Engine::new();
@@ -128,7 +128,7 @@ fn overflow_is_an_error_not_a_panic() -> Result<()> {
     let engine = Engine::new().with_limits(1_000_000, 64);
     let script = engine.load_str("func boom() { 9223372036854775807 + 1 }")?;
     let err = engine.call(&script, "boom", vec![]).unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Runtime);
+    assert_eq!(err.kind, brook::ErrorKind::Runtime);
     assert!(err.message.contains("overflow"));
     Ok(())
 }
@@ -137,7 +137,7 @@ fn overflow_is_an_error_not_a_panic() -> Result<()> {
 fn type_conflict_is_rejected() {
     let engine = Engine::new();
     let err = engine.load_str("func bad() { let x = 1\nx = \"str\"\nx }").unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Type);
+    assert_eq!(err.kind, brook::ErrorKind::Type);
 }
 
 // ---- phase 2 VM-specific tests ----
@@ -187,7 +187,7 @@ fn vm_gas_limit_stops_infinite_loop() -> Result<()> {
         "func spin() { let x = 0\n while x >= 0 { x = x + 1 }\n x }",
     )?;
     let err = engine.call(&script, "spin", vec![]).unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Runtime);
+    assert_eq!(err.kind, brook::ErrorKind::Runtime);
     assert!(err.message.contains("gas") || err.message.contains("step"));
     Ok(())
 }
@@ -201,7 +201,7 @@ fn vm_inferred_type_mismatch_is_reported_not_silent() -> Result<()> {
     let err = engine
         .call(&script, "cmp", vec!["z".into(), "a".into()])
         .unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Runtime);
+    assert_eq!(err.kind, brook::ErrorKind::Runtime);
     assert!(err.message.contains("type mismatch"));
     Ok(())
 }
@@ -230,7 +230,7 @@ fn vm_tuple_roundtrip_through_host() -> Result<()> {
         Ty::I64,
         |args| match &args[0] {
             Value::Tuple(pair) => Ok(Value::I64(pair[0].as_i64()? + pair[1].as_i64()?)),
-            _ => Err(vitul::Error::runtime("expected tuple")),
+            _ => Err(brook::Error::runtime("expected tuple")),
         },
     )?;
     let script = engine.load_str("func go(a, b) { sum_pair((a, b)) }")?;
@@ -252,7 +252,7 @@ fn panicking_host_fn_returns_error_instead_of_unwinding() -> Result<()> {
     // The panic must be caught at the call boundary and surfaced as an Err —
     // never propagated into the host's stack.
     let err = engine.call(&script, "go", vec![]).unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Runtime);
+    assert_eq!(err.kind, brook::ErrorKind::Runtime);
     assert!(err.message.contains("internal panic"), "got: {}", err.message);
     Ok(())
 }
@@ -270,7 +270,7 @@ fn division_and_modulo_by_zero_are_runtime_errors() -> Result<()> {
     )?;
     for name in ["div_i", "mod_i", "div_f", "mod_f"] {
         let err = engine.call(&script, name, vec![]).unwrap_err();
-        assert_eq!(err.kind, vitul::ErrorKind::Runtime, "{}: {:?}", name, err);
+        assert_eq!(err.kind, brook::ErrorKind::Runtime, "{}: {:?}", name, err);
         assert!(err.message.contains("by zero"), "{}: {}", name, err.message);
     }
     Ok(())
@@ -287,7 +287,7 @@ fn max_depth_stops_deep_recursion() -> Result<()> {
         "#,
     )?;
     let err = engine.call(&script, "recurse", vec![Value::I64(100)]).unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Runtime);
+    assert_eq!(err.kind, brook::ErrorKind::Runtime);
     assert!(err.message.contains("call depth limit"), "got: {}", err.message);
     Ok(())
 }
@@ -359,7 +359,7 @@ fn too_many_arguments_is_a_compile_error() {
              func go() { sum9(1,2,3,4,5,6,7,8,9) }",
         )
         .unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Type);
+    assert_eq!(err.kind, brook::ErrorKind::Type);
 }
 
 #[test]
@@ -399,13 +399,13 @@ fn to_str_accepts_scalars_and_rejects_heap_values() -> Result<()> {
     );
 
     let err = engine.load_str("func bad() { to_str((1, 2)) }").unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Type);
+    assert_eq!(err.kind, brook::ErrorKind::Type);
     assert!(err.message.contains("to_str"), "got: {}", err.message);
 
     let err = engine
         .load_str("func noop() { let x = 1 }\nfunc bad() { to_str(noop()) }")
         .unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Type);
+    assert_eq!(err.kind, brook::ErrorKind::Type);
     assert!(err.message.contains("to_str"), "got: {}", err.message);
     Ok(())
 }
@@ -416,7 +416,7 @@ fn tuple_equality_is_a_compile_error() {
     let err = engine
         .load_str("func f() { (1, 2) == (1, 2) }")
         .unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Type);
+    assert_eq!(err.kind, brook::ErrorKind::Type);
     assert!(err.message.contains("equality comparison"), "got: {}", err.message);
 }
 
@@ -426,7 +426,7 @@ fn unit_equality_is_a_compile_error() {
     let err = engine
         .load_str("func noop() { let x = 1 }\nfunc f() { noop() == noop() }")
         .unwrap_err();
-    assert_eq!(err.kind, vitul::ErrorKind::Type);
+    assert_eq!(err.kind, brook::ErrorKind::Type);
     assert!(err.message.contains("equality comparison"), "got: {}", err.message);
 }
 

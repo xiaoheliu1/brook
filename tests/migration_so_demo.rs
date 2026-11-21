@@ -1,9 +1,9 @@
-//! android_so_demo 迁移 POC —— 用 vitul 忠实改写两个真实脚本，验证
+//! android_so_demo 迁移 POC —— 用 brook 忠实改写两个真实脚本，验证
 //! 「标量面直接接住 + N 元组化 Map 返回 + Opaque 记录集 + OK/ERR 契约」。
 //!
 //! 原脚本（rhai）:
 //!   * `.push/com.example.t_wifi.rhai` —— 顶层语句流 + 字符串拼接 + log。
-//!     rhai 的整文件即程序在 vitul 里包成 `main()`（ADR-013 模式），
+//!     rhai 的整文件即程序在 brook 里包成 `main()`（ADR-013 模式），
 //!     失败通道从 throw 变成宿主 `Err` → `ERR\t...` 报告串。
 //!   * `scripts/bind_verify.rhai` —— img_screen_size/img_crop 的 Map 字段
 //!     访问 → 元组；img_find_all/img_find_bind 的 Array<Map> → Opaque +
@@ -21,7 +21,7 @@
 //!   * try/catch 的替代：正常路径不需要 catch（rhai 的 try/catch 253 处里
 //!     绝大多数是"预期内失败继续走"），预期失败用 `(ok, err)` 探针变体。
 
-use vitul::{register_fn, Engine, Error, Opaque, Value};
+use brook::{register_fn, Engine, Error, Opaque, Value};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -54,7 +54,7 @@ fn log_sink(logs: &Logs) -> impl Fn(String) + 'static {
 
 /// 模拟 so_demo 的 `run_script` 报告协议（lib.rs:1880-1884）：成败只看
 /// `OK\t` / `ERR\t` 前缀，脚本末值被丢弃。
-fn run_report(engine: &Engine, script: &vitul::Script) -> String {
+fn run_report(engine: &Engine, script: &brook::Script) -> String {
     match engine.call(script, "main", vec![]) {
         Ok(_) => "OK\t脚本执行完成".to_string(),
         Err(e) => format!("ERR\t{}", e),
@@ -160,7 +160,7 @@ fn build_engine(logs: &Logs, root_gate: Rc<Cell<bool>>) -> Engine {
     engine
 }
 
-fn compile(engine: &Engine, src: &str) -> vitul::Script {
+fn compile(engine: &Engine, src: &str) -> brook::Script {
     engine
         .load_str(src)
         .unwrap_or_else(|e| panic!("script should compile: {}", e))
@@ -325,7 +325,7 @@ fn task_handle_with_interior_mutability() {
 //     全部真实调用点本质是"exe + 脚本 + 空白分隔参数串"，payload 本来就
 //     以 JSON 字符串形态流动（json_input / stdout），Map 只是信封。
 //
-// 另验证 rhai 的 `let p = ()` 哨兵模式（先空后 Page）在 vitul 里
+// 另验证 rhai 的 `let p = ()` 哨兵模式（先空后 Page）在 brook 里
 // 用「作用域重构」替代——把用 p 的逻辑搬进获取 p 的分支。
 
 struct Page {
@@ -463,8 +463,8 @@ fn cross_script_call_via_host_function() {
         .load_str("func compute(n) { n * 7 }")
         .unwrap();
     // 宿主的脚本缓存（对应 so_demo 的 AST_CACHE）
-    let cache: Rc<RefCell<HashMap<String, vitul::Script>>> =
-        Rc::new(RefCell::new(HashMap::from([("b.vt".to_string(), script_b)])));
+    let cache: Rc<RefCell<HashMap<String, brook::Script>>> =
+        Rc::new(RefCell::new(HashMap::from([("b.bk".to_string(), script_b)])));
     // 递归检测的名字栈（对应 so_demo 的 SCRIPT_STACK）
     let stack: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -504,7 +504,7 @@ fn cross_script_call_via_host_function() {
     // 脚本 A 调用 B 的 compute —— 对脚本作者来说就是调一个宿主函数
     let script_a = engine
         .borrow()
-        .load_str("func main() {\n    let r = call_script(\"b.vt\", \"compute\")\n    if r.0 { r.1 } else { -1 }\n}")
+        .load_str("func main() {\n    let r = call_script(\"b.bk\", \"compute\")\n    if r.0 { r.1 } else { -1 }\n}")
         .unwrap();
     assert_eq!(
         engine.borrow().call(&script_a, "main", vec![]).unwrap(),
@@ -514,14 +514,14 @@ fn cross_script_call_via_host_function() {
     // 递归拦截：目标脚本又调 call_script(自己) → 名字栈检测 → 明确报错
     let script_self = engine
         .borrow()
-        .load_str("func self_call(n) { call_script(\"self.vt\", \"self_call\") }")
+        .load_str("func self_call(n) { call_script(\"self.bk\", \"self_call\") }")
         .unwrap();
     cache
         .borrow_mut()
-        .insert("self.vt".into(), script_self);
+        .insert("self.bk".into(), script_self);
     let caller = engine
         .borrow()
-        .load_str("func main() { call_script(\"self.vt\", \"self_call\") }")
+        .load_str("func main() { call_script(\"self.bk\", \"self_call\") }")
         .unwrap();
     let err = engine.borrow().call(&caller, "main", vec![]).unwrap_err();
     assert!(err.message.contains("跨脚本递归"), "{}", err.message);
@@ -532,10 +532,10 @@ fn cross_script_call_via_host_function() {
     // call_script 适合任务编排（粗粒度、字符串进出），而函数库（细粒度、
     // 强类型、任意签名）应该用宿主拼接——拼接下签名编译期检查、类型自由。
     let script_str = engine.borrow().load_str("func name(n) { \"文本\" }").unwrap();
-    cache.borrow_mut().insert("str.vt".into(), script_str);
+    cache.borrow_mut().insert("str.bk".into(), script_str);
     let caller = engine
         .borrow()
-        .load_str("func main() { call_script(\"str.vt\", \"name\") }")
+        .load_str("func main() { call_script(\"str.bk\", \"name\") }")
         .unwrap();
     let r = engine.borrow().call(&caller, "main", vec![]).unwrap();
     assert_eq!(

@@ -10,7 +10,7 @@
 
 **创建日期**：2026-11-20
 **当前状态**：阶段 3 功能全部落地（安全边界、`register_fn!` 类型化 FFI、C ABI / JNI 双 ABI 打包、`.sbc` 字节码缓存）。真机验证已于 2026-11-21 在 PLR110（Android 16 / arm64-v8a / SELinux Enforcing）完成（见 Q10 / D-032），产物已完成交叉编译 + ELF/导出符号校验。测试演进：自查修复后 64 项 → 迁移可行性验证后 65 项 → 补 `break` / `continue` 后 77 项 → 补 `/* */` 块注释与类型错误信息方向统一后 107 项 → 补诊断能力（字符列号 / 调用栈 / 源码片段渲染 / 宿主错误类型透传）后 118 项 → 补嵌套深度上限（修栈溢出崩溃）后 126 项 → 补数值内置 i64、C ABI 错误定位、线程/重载语义后 149 项（147 项单测/集成 + 2 个 doctest，另有 1 个 `ignore` 示例），release 构建通过；2026-11-21 静态审查修复两处 P1（if 表达式 else-if 深度守卫、EqHandle 对象身份语义）并解决 Q13/Q14（参考解释器对齐 VM、块值类型统一、validate 硬化），累计新增 10 项回归，**159 项全绿**（157 单测/集成 + 2 doctest + 1 ignore 示例）、release 构建零警告（shell 恢复后实测）；2026-11-21 C ABI 句柄式脚本层落地（ADR-015 / D-033）；同日解决 Q15 + fuzz 冒烟（D-034）、完成 rhai_demo/so_demo 迁移评估与 so_demo 改写 POC（D-035）；同日教程重构为纯脚本教程 + 宿主指南（D-038）、显式化 ADR-016（顶层函数式）并新增公共函数库模式（D-037），实测 **205 项全绿、零警告**
-**项目代号**：`vitul`（crate 名，已落地；曾用名 `miniscript`，2026-11-21 因 crates.io 名称被比特币生态 rust-miniscript 占用而更名，见 D-040）
+**项目代号**：`brook`（crate 名，已落地。名字为用户昵称「小河」的英译。曾用名链：`miniscript` → `vitul` → `brook`，见 D-040 / D-043）
 
 ---
 
@@ -202,7 +202,7 @@ func check(order, limit) {
 ### 3.7 宿主侧 API（已落地）
 
 ```rust
-use vitul::{register_fn, Engine, Opaque, Value};
+use brook::{register_fn, Engine, Opaque, Value};
 
 let mut engine = Engine::new();
 // 类型化注册：脚本签名由 Rust 类型推导，回调拿到的是具体类型而非 Box<Value>
@@ -211,10 +211,10 @@ register_fn!(engine, "is_vip",      (Opaque<Order>) -> bool, |o| o.vip)?;
 // 短形式可省略返回类型；也支持 Result<T, Error> 让宿主函数失败
 register_fn!(engine, "clamp", (f64, f64), |x, hi| if x > hi { hi } else { x })?;
 
-let mut script = engine.load_file("rules/risk.vt")?;
+let mut script = engine.load_file("rules/risk.bk")?;
 let order = Value::from(Opaque::new(Order { /* ... */ }));
 let result = engine.call(&script, "check", vec![order, Value::F64(1000.0)])?;
-engine.reload(&mut script, "rules/risk.vt")?;           // 热重载，宿主不动
+engine.reload(&mut script, "rules/risk.bk")?;           // 热重载，宿主不动
 
 // 字节码缓存：源码已在内存时（Android assets / 网络下发）只读缓存文件
 let cached = engine.compile_cached(&src, "<assets>", "rules/risk.sbc")?;
@@ -273,7 +273,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - [x] 宿主 API（register_fn / register_type / Opaque 句柄）+ 热重载
 - [x] Criterion benchmark 框架 + 手写 Rust 基线（基线数据见第十章）
 - [x] 示例脚本：fib、风控规则；集成测试 8 项 + 词法单测 6 项，全绿
-- **交付物**：`vitul` crate，14 个测试通过，性能基线已采集
+- **交付物**：`brook` crate，14 个测试通过，性能基线已采集
 - **注意**：实测 AST 解释器约 765× 慢于原生（fib18: 4.58ms vs 6.0µs），符合预期；阶段 2 VM 需将其压到 3–8×
 
 ### 阶段 2 · 寄存器 VM（性能攻坚）✅ 已完成 2026-11-20
@@ -303,7 +303,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - [x] FFI 注册宏：`register_fn!` + `ScriptType` / `FromValue` / `HostResult` + `Opaque<T>`，签名从 Rust 类型推导，手写 `Vec<Ty>` 不再是必需（raw API 保留）
 - [x] `.sbc` 字节码缓存：零依赖二进制格式，源码 hash 校验 + host registry fingerprint 绑定 + 全量边界检查；`script_to_bytes` / `script_from_bytes` / `compile_cached` / `load_cached` / `load_sbc`
 - [x] C ABI 边界：`ms_call_i64` / `ms_last_error` / `ms_abi_version`，`catch_unwind` 保证 panic 不跨 `extern "C"`
-- [x] `cargo ndk` 打包：arm64-v8a + armeabi-v7a 的 `libvitul.so`（jniLibs 布局），以及两个 ABI 的原生 CLI；ELF 架构与导出符号均已校验
+- [x] `cargo ndk` 打包：arm64-v8a + armeabi-v7a 的 `libbrook.so`（jniLibs 布局），以及两个 ABI 的原生 CLI；ELF 架构与导出符号均已校验
 - [x] 真机/模拟器运行验证（2026-11-21 PLR110 通过，见 Q10 / D-032）：smoke test、扩展脚本（递归/循环/字符串/元组）、除零错误定位、gas 止损全部通过；`scripts/android_build.sh` 顺带修复 Git Bash 路径改写问题
 - **交付物**：完整可用的宿主集成方案（Rust 侧宏注册、Android 侧 JNI .so 与 C ABI）；自查修复后 63 项测试全绿、release 构建通过、双 ABI 交叉编译通过。**真机运行是唯一未验证项**，不粉饰【2026-11-21 注：已验证，见 Q10】
 
@@ -459,16 +459,16 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **验证清单**：① ARM 真机 execmem 探测矩阵（含不同 OEM / targetSdk）；② 冷启动耗时与峰值内存；③ 非 fib 的业务脚本收益；④ JIT → VM 回退路径正确性与 panic 边界。
 
 ### ADR-013 · 从 rhai 迁移的可行性：宿主适配可行，语言缺口是边界
-- **修订（2026-11-21，ADR-017）**：本 ADR 记录的「`import` 触碰引擎」开放项**已解除**——约定式 import 落地（见 ADR-017）。rhai_demo 的 5 个 `import "common" as lib` 脚本迁移路径：common.rhai → common.vt，`lib::函数` 调用改为直接调用（无命名空间，撞名编译报错兜底）。
+- **修订（2026-11-21，ADR-017）**：本 ADR 记录的「`import` 触碰引擎」开放项**已解除**——约定式 import 落地（见 ADR-017）。rhai_demo 的 5 个 `import "common" as lib` 脚本迁移路径：common.rhai → common.bk，`lib::函数` 调用改为直接调用（无命名空间，撞名编译报错兜底）。
 - **日期**：2026-11-20
 - **状态**：已验证（概念验证，非生产迁移）
 - **背景**：存在用本项目替换 `rhai_demo`（34 个脚本、约 208 个 `register_fn`、大量 Map/Array 返回）的诉求。问题被界定为「宿主能力不变，脚本可改，能否完全迁移」。
-- **验证方法**：`tests/migration_browser_pick.rs` 把最难的 `browser_pick.rhai`（同时踩中 Map 字段、方法调用、动态数组、try/catch、错误对象五类缺口）按 A 方案改写为 `.vt`：mock 浏览器能力不变，只改注册层，期望值照抄原脚本 12 组断言。全绿（失败列表长度 0），release 全量测试无回归。
+- **验证方法**：`tests/migration_browser_pick.rs` 把最难的 `browser_pick.rhai`（同时踩中 Map 字段、方法调用、动态数组、try/catch、错误对象五类缺口）按 A 方案改写为 `.bk`：mock 浏览器能力不变，只改注册层，期望值照抄原脚本 12 组断言。全绿（失败列表长度 0），release 全量测试无回归。
 - **结论**：
   - ✅ 不动引擎内核即可覆盖五个缺口：Map→`Opaque<Pick>` + 访问函数；方法调用→普通函数/内置；动态数组→`Opaque<StrList>` + `list_*`；try/catch 错误对象→错误码塞进 `err` 字段；顶层语句→包进 `main()`。
   - ⚠️ 实测两条静态类型代价：① 宿主返回值仅支持到 **2 元组**，3 元组需改用 `Opaque` 承载；② 脚本函数参数类型必须固定，rhai 的多态 `check(got,want)` 需统一 `to_str` 后按字符串比较，或加 `: str` 标注。
   - ❌ 真正无法靠注册层绕过的是 `break/continue` 与 `import` 模块：前者要改写控制流或给引擎加两个关键字（小改），后者靠宿主预拼接 lib 源码规避；若要原生支持则触碰引擎。
-- **工作量实测**：原 rhai 脚本 187 行 → 改写 .vt 95 行；宿主侧新增 24 个注册函数（访问器 + 列表适配器 + mock）。注意这是**单个最难脚本 + mock 宿主**的量，全量 34 脚本的真实成本远高于此。
+- **工作量实测**：原 rhai 脚本 187 行 → 改写 .bk 95 行；宿主侧新增 24 个注册函数（访问器 + 列表适配器 + mock）。注意这是**单个最难脚本 + mock 宿主**的量，全量 34 脚本的真实成本远高于此。
 - **决策**：不新增 Map/List/方法调用语法（会摧毁极简定位）；迁移走「宿主适配层 + 脚本改写」。是否整套迁移属业务决策，本 ADR 只证明技术可行性与边界。
 - **修订（2026-11-21，D-035）**：本 ADR 记录的两条静态类型代价之一——「宿主返回值仅支持到 2 元组」——已被 host.rs 桥接层扩展解除（`impl_tuple_n!` 覆盖 2–8 元；语言本身一直支持 N 元组，缺口在桥接层）。变长记录集仍走 Opaque + count/indexed getter。rhai_demo 与 android_so_demo 的全量暴露函数清单与分层可行性评估见 `docs/migration/`，so_demo 两个真实脚本（t_wifi、bind_verify）的忠实改写 POC 见 `tests/migration_so_demo.rs`。
 
@@ -518,7 +518,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **背景**：ADR-013 将 `import` 记录为「触碰引擎的开放项」；D-041 暴露其反面——没有该能力时教程无法教函数复用，且用户实测"如果你的宿主提供了"假设句式造成半天误导。用户定性：迁移前落地、**脚本作者零配置**（像 Go 同目录那样，放个文件就能用）。
 - **决策**：
   1. **语法**：`import "名字"` 仅文件头（所有 func 之前）；引入的函数进全局函数集，**无命名空间**（直接 `retry(3)`，不写 `common.retry(3)`——撞名编译报错兜底）
-  2. **解析（约定式）**：当前脚本所在目录的 `<名字>.vt`；子路径允许（`import "lib/net"` → `lib/net.vt`，相对**导入者**目录）；`..` / 绝对路径 / `\` / 盘符全部编译期禁止（永远锁在脚本目录树内——与 so_demo fs 护栏同一哲学）
+  2. **解析（约定式）**：当前脚本所在目录的 `<名字>.bk`；子路径允许（`import "lib/net"` → `lib/net.bk`，相对**导入者**目录）；`..` / 绝对路径 / `\` / 盘符全部编译期禁止（永远锁在脚本目录树内——与 so_demo fs 护栏同一哲学）
   3. **逃生舱**：`set_import_dir`（便捷式）与 `set_import_resolver`（回调，assets/DB/加密源码）覆盖特殊部署；未配置时 load_str 里的 import 明确报错（D-041 规则：不存在就说不存在）
   4. **实现**：文本拼接进主流（各单元按拼接视图行号偏移解析，`Lexer::new_with_offset`）→ checker/codegen/cache 全线复用；loaded/stack 双集合（重复 import 幂等去重 vs A→B→A 真循环报错）；上限：单次编译 ≤32 单元、链深 ≤8、单份 ≤1 MiB
   5. **缓存**：`.sbc` v4 追加依赖清单（解析路径 + hash），`load_cached`/`compile_cached` 加载时逐一校验——任一依赖改一字，依赖脚本缓存自动失效重建
@@ -538,7 +538,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 | Q1 | `for i in 0..n` 放 v1 还是 v2？ | 已解决（v1） | 阶段 1 已实现并测试通过 |
 | Q2 | 字符串仅 `+` 拼接是否满足需求（不做插值模板）？ | 已解决（仅 +） | 阶段 1 按此实现 |
 | Q3 | 整数溢出按错误终止是否符合使用场景？ | 已解决（错误终止） | 阶段 1 按此实现，见第十章 D-003 |
-| Q4 | 项目代号定名 | 已解决 | 定为 `vitul` |
+| Q4 | 项目代号定名 | 已解决 | 初版定名 `miniscript`；2026-11-21 两轮更名现为 `brook`（用户昵称「小河」的英译，D-040 / D-043） |
 | Q5 | 是否引入可选值 `T?` | 倾向否 | 见 ADR-004，除非出现强需求 |
 | Q6 | 全推断边界：宿主调用点的参数类型脚本内不可见 | 部分缓解 | 默认 I64 收敛 + 索引反推 + 边界类型校验（不匹配明确报错，见 D-008）；根治需"宿主声明脚本函数签名"。2026-11-21：索引反推补齐**续推**语义——已部分推断成短元组的变量遇到更大索引时扩长而非误报越界（D-035，此前 `func f(t) { t.0 + t.1 }` 编译失败） |
 | Q7 | 内置数学函数 `abs/min/max` 当前仅接受 f64，i64 需 `to_f64` 转换 | 已解决 | `abs`/`min`/`max` 改为数值泛型：实参全 i64 则结果 i64（`ir::builtin` 追加 16/17/18 三个 id，`numeric_id` 在 codegen 选变体，**不加 opcode、不动 `.sbc` VERSION**）；`abs(i64::MIN)` 走 `checked_abs` 报 `i64 abs overflow` 而不是 Rust panic。`sqrt/floor/ceil/pow` **保持仅 f64**——整数开方没有精确 i64 结果，静默截断比报错更糟 |
@@ -557,13 +557,14 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 > 倒序追加。格式：`日期 · 变更内容 · 影响范围`
 
+- **2026-11-21** · **项目更名：`vitul` → `brook`（D-043）**：用户昵称「小河」的英译——crates.io `brook` 已被占用（BrookGPU 学术撞名），**用户明确接受放弃发布资格**（本地项目）；扩展名 `.vt` → `.bk`。历史条目中的旧名随全文替换统一，唯 Q4 / D-040 / 代号行三处回改为历史表述保真。测试 206→217 项（import 11 项），全绿零警告 · 全部文件
 - **2026-11-21** · **约定式 import 落地（ADR-017 / D-042）**：语言新增 `import "名字"` 语句（仅文件头）——引擎从脚本所在目录（或 set_import_dir/set_import_resolver 配置）载入库源码，文本拼接合并编译；重复 import 幂等去重、循环 import 编译报错、撞名报错、`..`/绝对路径编译期禁止（护栏引擎强制）；`.sbc` v4 追加依赖清单（路径+hash），加载时逐一校验，任一依赖改一字依赖脚本缓存自动失效；load_str 写 import 明确报错（D-041 规则）。parser +30 / loader +120 / cache +40 / 测试 11 项，**217 项全绿、零警告**；教程 §4.7→§4.8 重写为真实能力、HOST_GUIDE §12 重写（拼接降为备选）· 第三章 3.8、第七章 ADR-017、第七章 ADR-013 修订注、第九章、parser.rs / lexer.rs / token.rs / ast.rs / engine.rs / cache.rs / tests/import_stmt.rs
 - **2026-11-21** · **教程规则收紧：不写不存在的能力（D-041）**：用户按教程 §4.7「公共函数库（如果你的宿主提供了）」实测失败——该能力当前不存在，假设句式（"如果你的宿主提供了"）误导用户浪费半天。修正：§4.7 删除；§4.6 收尾直说「可调用函数 = 13 内置 + 宿主注册，无公共库、无跨脚本调用；复用逻辑 = 复制粘贴或请宿主做成宿主函数」；§11 import 行同步「当前不支持」；HOST_GUIDE §12/12.1 加定位警示（两模式均为宿主侧自行实现，非语言能力，别写进脚本教程）。**教训**：教程只写当前存在的能力；"如果宿主提供了"这类假设句式一律禁止——读者没有义务分辨哪些是假设哪些是现实。测试 26 项教程测试全过 · docs/TUTORIAL.md、docs/HOST_GUIDE.md
-- **2026-11-21** · **项目更名：`miniscript` → `vitul`（D-040）**：动机——crates.io 的 `miniscript` 已被比特币生态 rust-miniscript 占用（发布资格阻塞）。候选经 crates.io 可用性批量核查 + 撞名搜索三轮筛选（用户先后提出 Verse——与 Epic Games 的 Fortnite/UEFN 脚本语言撞名、Spar——crates.io 已占用且撞学术 Spar 并行语言），最终定名 **`vitul`**（crates.io 可用、技术领域零撞名——搜索仅人名与实体图书馆），扩展名 `.ms` → `.vt`，字节码魔数 `MSBC` → `VTBC`（旧缓存自然失效，格式布局不变）。全链路替换 32 文件 ~180 处（Cargo/源码/测试/文档/脚本）；C ABI 的 `ms_*` 符号与 `MS_ERR_*`/`MS_VAL_*` 常量**保留不改**（ABI 稳定优先，前缀作为历史遗留记录）。验证：206 项测试全绿、零警告 · 全部文件
+- **2026-11-21** · **项目更名：`miniscript` → `vitul`（D-040；vitul 与 .vt 后续更名 brook / .bk，见 D-043）**：动机——crates.io 的 `miniscript` 已被比特币生态 rust-miniscript 占用（发布资格阻塞）。候选经 crates.io 可用性批量核查 + 撞名搜索三轮筛选（用户先后提出 Verse——与 Epic Games 的 Fortnite/UEFN 脚本语言撞名、Spar——crates.io 已占用且撞学术 Spar 并行语言），最终定名 **`vitul`**（crates.io 可用、技术领域零撞名——搜索仅人名与实体图书馆），扩展名 `.ms` → `.vt`，字节码魔数 `MSBC` → `VTBC`（旧缓存自然失效，格式布局不变）。全链路替换 32 文件 ~180 处（Cargo/源码/测试/文档/脚本）；C ABI 的 `ms_*` 符号与 `MS_ERR_*`/`MS_VAL_*` 常量**保留不改**（ABI 稳定优先，前缀作为历史遗留记录）。验证：206 项测试全绿、零警告 · 全部文件
 - **2026-11-21** · **第二轮全盘复审（D-039）**：对自己全天新写的代码做新鲜眼光复查——**修复 1 处**：`msval_to_value` 的 STR 分支缺空指针检查（`len > 0 && s == null` 会 `from_raw_parts(null)`——调用契约虽允许 UB，但 ffi.rs 其他指针入口全部有 null 检查，防御姿态不一致）+ 测试钉死；教程 §2.4 浮点字面量措辞澄清（`.5` 不支持——点号开头是元组索引语法，需 `0.5`）。**复查干净项**：typecheck pass 1 三重检查顺序、lexer 指数门控位置、parser If 臂深度计数、`impl_tuple_n` 单一来源（impl_tuple2 已被替换无残留）、Failure::of 无残留引用、无 TODO、0 警告。测试 205→**206 项全绿** · ffi.rs / tests/ffi.rs / docs/TUTORIAL.md
 - **2026-11-21** · **ADR-016 显式化：顶层只允许函数定义（不做顶层语句流）**：阶段 1 起的隐式选择补全论证并立 ADR——六条理由（调度权归宿主 / 热重载语义干净 / 可复现性 / 安全模型按调用计费 / 并发无顶层共享状态 / 全线简化）、代价（main 包裹 / 无顶层常量 / ad-hoc 手感弱）、关键洞察（**糖的方向性**：语句流可从函数入口廉价模拟，反之不行——选下位原语，糖留给宿主）、证据链（rhai_demo 34 脚本全任务型 / REPL 命令式 / ARGS 注入 0 使用）· 第七章、TUTORIAL.md §1
-- **2026-11-21** · **教程按读者重构：纯脚本教程 + 独立宿主指南（D-038）**：用户反馈"脚本用户不需要宿主/Rust 知识，宿主内容喧宾夺主"——TUTORIAL.md 重写为**纯脚本教程**（§1 脚本结构平铺图与执行模型 / §2 语言基础含运算符全表与整数边界 / §3 控制流 / §4 函数 / §5 元组详解 / §6 字符串 / §7 内置函数完整参考 / §8 报错对照表 13 条 / §9 完整巡检示例 docs/patrol.vt / §10 速查表 / §11 刻意没有的东西及替代方案），宿主内容全部迁至新文件 **docs/HOST_GUIDE.md**；§1 三次澄清（函数平铺不嵌套含结构图、入口名由宿主决定非强制 main、顶层无语句流的设计原因）均来自用户提问。配套测试 26 项（patrol.vt 用 include_str! 原样执行）。测试 199→**205 项全绿、零警告** · docs/TUTORIAL.md、docs/HOST_GUIDE.md、docs/patrol.vt、tests/tutorial_examples.rs
-- **2026-11-21** · **公共函数库模式落地 + checker 重复定义措辞区分（D-037）**：回应「1.vt 公共函数、其他脚本复用」——语言无 `import`（ADR-013 已记录为开放项），官方姿势是**宿主拼接**（lib 源码 + 业务源码 → 一份编译单元），教程新增 §4.4 + `shared_library_via_host_concat` 测试（顺序无关 / 同名冲突报错 / 缓存与热重载适配）。顺带修 checker：pass 1 之前宿主碰撞与脚本内部重复定义走同一条报错（措辞 "already defined by the host" 在拼接场景误导）——Checker 记录 `host_names`，两类碰撞分开措辞（"by the host" vs "duplicate definition"）。测试 199→**208 项全绿、零警告** · docs/TUTORIAL.md §4.4、typecheck.rs、tests/tutorial_examples.rs
+- **2026-11-21** · **教程按读者重构：纯脚本教程 + 独立宿主指南（D-038）**：用户反馈"脚本用户不需要宿主/Rust 知识，宿主内容喧宾夺主"——TUTORIAL.md 重写为**纯脚本教程**（§1 脚本结构平铺图与执行模型 / §2 语言基础含运算符全表与整数边界 / §3 控制流 / §4 函数 / §5 元组详解 / §6 字符串 / §7 内置函数完整参考 / §8 报错对照表 13 条 / §9 完整巡检示例 docs/patrol.bk / §10 速查表 / §11 刻意没有的东西及替代方案），宿主内容全部迁至新文件 **docs/HOST_GUIDE.md**；§1 三次澄清（函数平铺不嵌套含结构图、入口名由宿主决定非强制 main、顶层无语句流的设计原因）均来自用户提问。配套测试 26 项（patrol.bk 用 include_str! 原样执行）。测试 199→**205 项全绿、零警告** · docs/TUTORIAL.md、docs/HOST_GUIDE.md、docs/patrol.bk、tests/tutorial_examples.rs
+- **2026-11-21** · **公共函数库模式落地 + checker 重复定义措辞区分（D-037）**：回应「1.bk 公共函数、其他脚本复用」——语言无 `import`（ADR-013 已记录为开放项），官方姿势是**宿主拼接**（lib 源码 + 业务源码 → 一份编译单元），教程新增 §4.4 + `shared_library_via_host_concat` 测试（顺序无关 / 同名冲突报错 / 缓存与热重载适配）。顺带修 checker：pass 1 之前宿主碰撞与脚本内部重复定义走同一条报错（措辞 "already defined by the host" 在拼接场景误导）——Checker 记录 `host_names`，两类碰撞分开措辞（"by the host" vs "duplicate definition"）。测试 199→**208 项全绿、零警告** · docs/TUTORIAL.md §4.4、typecheck.rs、tests/tutorial_examples.rs
 - **2026-11-21** · **教程元组详解 + 修复嵌套索引的词法缺陷（D-036）**：用户反馈 i64 表格易误读（42 像上限）→ 表格澄清 + FAQ Q13（字面量/运算溢出均报错不回绕 + 最小值写不成字面量的冷知识）+ `integer_boundaries` 测试。教程 §2.5 扩为元组详解（单元素尾逗号、嵌套连点、无解构、禁相等、至少 N 元、标志位模式、与数组差异）。**扩写时抓到真实词法缺陷**：`p.1.0` 里 `1.0` 被数字规则整体读成浮点字面量，嵌套元组索引链（`t.0.1`）在现有引擎中根本无法表达——lexer 增加 `prev_dot` 状态（Dot 后的数字只按整数读，不吞 `.小数`/指数；普通位置 `1.5`/`2e3` 不受影响）。测试 197→**199 项全绿、零警告** · 第三章、docs/TUTORIAL.md、lexer.rs、tests/tutorial_examples.rs
 - **2026-11-21** · **新增入门教程 docs/TUTORIAL.md + 可执行示例集（D-036）**：面向小白的中文教程——定位/五分钟上手/语言速览（函数、变量、控制流、类型、元组、字符串、内置白名单）/宿主集成（register_fn!、类型边界与默认 i64 防线、错误诊断、Opaque、N 元组、热重载、安全三件套）/进阶（.sbc 缓存的诚实定位、线程模型、性能）/12 条 FAQ。配套 `tests/tutorial_examples.rs` 20 项测试逐条执行教程示例（断言钉死每个声称的返回值）——**教程与代码永不过期**。写作过程中教程自身三轮被测试纠错：顶层语句不存在（quick_start 首版踩坑，已升级为教程 Q0/§1 重点提醒）、`Error::report` 双参数签名、线程返回 `Value` 不 Send（跨线程只传标量的实例教学）；另记录两个口径：codegen 的"the maximum is 8"对 >8 实参调用可达（typecheck 对 9 参数函数放行后由 codegen 拦截）、编译错 `x +` 的位置在被吃掉的换行后暴露（3:1）。测试 177→**197 项全绿、零警告** · docs/TUTORIAL.md、tests/tutorial_examples.rs
 - **2026-11-21** · **rhai_demo / android_so_demo 迁移评估 + so_demo 改写 POC（D-035）**：两个宿主全量暴露面盘点（rhai_demo：229 注册 / ~197 名 / 45 Map + 22 Array 返回；so_demo：232 重载 / 190 名 / 19 Map + ~55 Array 返回），完整清单入 `docs/migration/{rhai_demo,so_demo}_inventory.md`。① host.rs `impl_tuple_n!` 把宿主元组桥接从 2 元扩到 **2–8 元**（ADR-013「仅 2 元组」实为桥接层缺口而非语言缺口，正式解除）；② typecheck 修复索引反推的**续推**缺口（`func f(t) { t.0 + t.1 }` 此前在第二索引误报越界，现按 ADR-006「至少 N+1 元」扩长）；③ `tests/migration_so_demo.rs` 4 项 POC——t_wifi（标量面 + OK/ERR 契约 + 编译错/宿主 Err 双失败通道）、bind_verify 忠实改写（Map→元组、Array<Map>→Opaque+indexed getter、try/catch→(ok,err) 探针，9 行日志逐一断言）、Task 句柄（内部可变性）、2–8 元组往返与类型错误。测试 173→**177 项全绿、零警告** · 第七章 ADR-013 修订、第八章 Q6、第九章、docs/migration/、host.rs / typecheck.rs / tests/migration_so_demo.rs
@@ -576,11 +577,11 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **2026-11-20** · 线程模型与热重载语义落文档并补测试：新增 `tests/threading.rs` 7 项（8 线程各自 `Engine` 注册不同闭包状态互不干扰、同源并发编译、reload 后新调用生效、克隆保留旧字节码、reload 失败旧脚本可用、reload 后诊断引用**新**源码、句柄留在本线程）；修掉 `Engine::reload` 漏更新 `Script::source` 的缺陷（重载后 `report` 会用旧源码配新行号，caret 指错位置）；`Engine` / `reload` 文档写明 `!Send` 是设计而非疏漏——`call(&Script)` 与 `reload(&mut Script)` 在 safe Rust 下不可能重叠，因此不需要锁也没有「半新半旧」窗口，多线程宿主一律每线程一个 `Engine`；测试数 142→149 · 第二章、第九章、engine.rs / tests/threading.rs
 - **2026-11-20** · C ABI 错误模型增补：`ffi.rs` 的 `thread_local` 改为结构化 `LastError`（消息 + 行列），新增 `ms_last_error_line` / `ms_last_error_col` 导出，C 侧不再只能解析字符串；错误码按**阶段**区分，新增 `MS_ERR_RUNTIME = 5`（未知函数/参数个数与类型/gas/堆/溢出/除零/宿主回调），`MS_ERR_ENGINE = 3` 收窄为「编译不过或返回值不是 i64」；消息仍写进**调用方 buffer**，跨边界零分配；`ms_abi_version` 保持 1（纯增量导出，老调用方仍靠 `!= MS_OK` 判失败）；`jniLibs` 双 ABI `.so` 已重建并校验导出符号；测试数 140→142 · 第三章、第九章、ffi.rs / tests/ffi.rs / jniLibs
 - **2026-11-20** · 数值内置函数 i64 支持（Q7）：`abs`/`min`/`max` 改为数值泛型，实参全 i64 则结果 i64，`ir::builtin` 追加 `ABS_I64/MIN_I64/MAX_I64 = 16/17/18`，codegen 用 `numeric_id` 选变体、`builtin_ret(func)` 取返回类型；**不加 opcode、`.sbc` VERSION 不变**（旧缓存里不可能出现新 id，旧解码器遇未知 id 仍被 `validate` 拒绝）；`abs(i64::MIN)` 用 `checked_abs` 报 `i64 abs overflow`（Rust 的 `abs` 在此 panic）；参考解释器同步。顺带把缓存解码里写死的 `TO_STR_STR` 上界换成 `builtin::name(id) != "?builtin"`，避免下次加 id 时再踩同一个坑；`sqrt`/`floor`/`ceil`/`pow` 维持仅 f64；整数实参会把未定参数推成 i64（与 `x + 1` 一致），无证据时仍回落 f64。测试数 126→140 · 第三章、第八章 Q7、ir.rs / typecheck.rs / codegen.rs / vm.rs / eval.rs / cache.rs / tests/builtins_numeric.rs
-- **2026-11-20** · 修掉**栈溢出崩溃**：解析是递归下降，typecheck / codegen / AST 的 `Drop` 同样递归，深嵌套源码（1000 层括号、200 项 `1+1+…`、200 条 `else if`）会让进程 `STATUS_STACK_OVERFLOW` 直接 abort，`catch_unwind` 抓不住；现在 `parser.rs` 引入 `MAX_NESTING = 64` 与统一的 `enter()` 计数（块、括号、一元、二元链均计入，链式每个算子 +1，因为左结合链虽是循环构造但树深随项数增长），超限报 `nesting too deep (limit 64)` 并带 `file:line:col`；不在解析期拦住的话，AST 先被造出来，报错之后析构本身就会再次溢出。**性能排查（原判定有误，已纠正）**：首版把 `format!` 的错误构造直接写在 `enter()` 里，`compile fib.vt` 从 8.0µs 涨到 9.2µs（+15%，A/B 关掉守卫确认可复现：8.44µs）——函数体积膨胀后递归下降的热函数不再内联，代价远大于「一次自增比较」。抽成 `#[cold] #[inline(never)] fn depth_error()` 后回到 8.39µs，守卫实际免费；VM 侧 fib(18) 158.2µs / sum_to(200) 1.60µs 与基线持平。教训：给热函数加错误分支时，错误构造必须外提为冷函数，否则「只多一个 if」的直觉不成立。测试数 118→126 · 第三章、第九章、parser.rs / tests/depth.rs
+- **2026-11-20** · 修掉**栈溢出崩溃**：解析是递归下降，typecheck / codegen / AST 的 `Drop` 同样递归，深嵌套源码（1000 层括号、200 项 `1+1+…`、200 条 `else if`）会让进程 `STATUS_STACK_OVERFLOW` 直接 abort，`catch_unwind` 抓不住；现在 `parser.rs` 引入 `MAX_NESTING = 64` 与统一的 `enter()` 计数（块、括号、一元、二元链均计入，链式每个算子 +1，因为左结合链虽是循环构造但树深随项数增长），超限报 `nesting too deep (limit 64)` 并带 `file:line:col`；不在解析期拦住的话，AST 先被造出来，报错之后析构本身就会再次溢出。**性能排查（原判定有误，已纠正）**：首版把 `format!` 的错误构造直接写在 `enter()` 里，`compile fib.bk` 从 8.0µs 涨到 9.2µs（+15%，A/B 关掉守卫确认可复现：8.44µs）——函数体积膨胀后递归下降的热函数不再内联，代价远大于「一次自增比较」。抽成 `#[cold] #[inline(never)] fn depth_error()` 后回到 8.39µs，守卫实际免费；VM 侧 fib(18) 158.2µs / sum_to(200) 1.60µs 与基线持平。教训：给热函数加错误分支时，错误构造必须外提为冷函数，否则「只多一个 if」的直觉不成立。测试数 118→126 · 第三章、第九章、parser.rs / tests/depth.rs
 - **2026-11-20** · 诊断能力补齐：`lexer.rs` 的 `col` 改为**字符列**（UTF-8 续字节不再计数），修掉含中文的行报错列号偏移；`Error` 新增 `trace`（`TraceFrame`）与 `Error::report`，VM 在 `run` 失败后回放帧栈生成调用栈（外层在前，热路径零成本）；新增 `src/diag.rs` 渲染 `--> 文件:行:列` + 源码行 + 按显示宽度（tab=4、CJK=2）对齐的 caret，深栈自动省略中段；`Script` 保留 `source` 并新增 `Script::report`，缓存命中同样可渲染；宿主函数返回的错误保留原 `ErrorKind`，不再一律压成 `runtime`。基准无回退（fib(18) 144.7µs vs 基线 157.9µs，sum_to 1.54µs vs 1.63µs）；测试数 107→118 · 第三章、第九章、error.rs / diag.rs / vm.rs / engine.rs / lexer.rs / cache.rs / tests/diagnostics.rs
 - **2026-11-20** · 语法与诊断增补：支持 `/* */` 块注释（C 风格不嵌套；跨行的块注释补发一个 `Newline`，否则会把前后两条语句粘连）；统一类型错误信息方向为 `expected <期望>, found <实际>`，覆盖 `if` / `while` 条件、`&&` / `||`（区分左右操作数）、`!`、`let` 标注、赋值、`for` range、函数返回值、脚本调用与内置函数参数；测试数 77→107 · 第三章、lexer.rs / typecheck.rs / tests/operators.rs / tests/type_errors.rs
 - **2026-11-20** · 语法增补 `break` / `continue`：`Stmt` 增两个发散语句，typecheck 按 `loop_depth` 拒绝循环外使用，codegen 用循环上下文栈回填跳转（`for` 的 `continue` 落在增量之前，否则索引不变会死循环）；**不新增 opcode**、`.sbc` 格式与版本不变；参考解释器同步支持语句位置、表达式位置报明确错误；测试数 65→77 · 第三章、parser.rs / typecheck.rs / codegen.rs / eval.rs / token.rs / tests/loops.rs
-- **2026-11-20** · rhai 迁移可行性验证：新增 `tests/migration_browser_pick.rs`，把最难的 browser_pick 脚本按「宿主适配层」方案改写为 .vt 并跑通 12 组断言；新增 ADR-013 记录可行性与静态类型边界；测试数 64→65 · 第七章、第九章、tests/migration_browser_pick.rs
+- **2026-11-20** · rhai 迁移可行性验证：新增 `tests/migration_browser_pick.rs`，把最难的 browser_pick 脚本按「宿主适配层」方案改写为 .bk 并跑通 12 组断言；新增 ADR-013 记录可行性与静态类型边界；测试数 64→65 · 第七章、第九章、tests/migration_browser_pick.rs
 - **2026-11-20** · JIT 路线证据复核与决策记录：AOSP sepolicy 源码核查（ADR-001 事实前提证伪）、Cranelift 包体受控实验（+1.81 MiB/ABI）、fib(20) 同口径 9.6×、冷启动 721 µs / 2 次回本、sum_to(200) 13.2× / 445 次回本；修正 1.3 / ADR-001、新增 Q11 与 ADR-012 草案 · 第一章、第七章、第八章、第十章
 - **2026-11-20** · 性能逐项优化（续4·终）：⑥b 预分配 regs（`Vm::new` 按 max_nregs×max_depth、带 2MiB 上限预留容量，免深递归重分配）双向严格 A/B 信号不一致、Rust 基线自身抖动 4%，判定噪声主导、回退（D-025）· 第十章、vm.rs
 - **2026-11-20** · 性能逐项优化（续3）：①b 尾位置 Ret 复制经字节码实证在本仓库 fib/sum_to 均不命中、跳过；⑥a call/ret 瘦身（Frame 16B + 去 argv + nregs 局部 + 直接索引）实现后严格 A/B fib 完全持平、回退，新增 `tests/frame_packing.rs` 4 项 · 第十章、vm.rs / tests
@@ -594,7 +595,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **2026-11-20** · 阶段 2 完成：类型特化寄存器 VM，20 测试全绿，性能数据见第十章 · 第四章、ADR-007、代码库
 - **2026-11-20** · 新增宿主调用边界类型校验：推断默认值与实参不符时明确报错，杜绝静默算错 · ADR-006、engine.rs
 - **2026-11-20** · 修复 `if` 分支类型合并 bug：未 resolve 的 Var 比较不相等导致返回类型退化 Unit（阶段 1 遗留，VM 边界转换时暴露）· typecheck.rs
-- **2026-11-20** · 阶段 1 完成：`vitul` crate 落地，14 测试通过，性能基线采集（见第十章）· 第四章、代码库
+- **2026-11-20** · 阶段 1 完成：`brook` crate 落地，14 测试通过，性能基线采集（见第十章）· 第四章、代码库
 - **2026-11-20** · 语法增补赋值语句 `x = expr`（阶段 1 实现时发现循环体必需）· 第三章、ADR 无
 - **2026-11-20** · 文档创建，固化多轮讨论的全部架构与语言方案 · 全项目
 - **2026-11-20** · 语法最终定稿：`func` + `let` + 无分号 + 参数无标注 + 返回类型可选 + 元组多返回 · 第三章
@@ -618,15 +619,15 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 ### 2026-11-20 · 阶段 1 实施记录
 
-**成果**：`vitul` crate 从零落地。模块：`span` `error` `token` `lexer` `ast` `parser` `ty` `typecheck` `value` `eval` `engine`。14 个测试全绿（词法 6 + 集成 8）。
+**成果**：`brook` crate 从零落地。模块：`span` `error` `token` `lexer` `ast` `parser` `ty` `typecheck` `value` `eval` `engine`。14 个测试全绿（词法 6 + 集成 8）。
 
 **性能基线**（Criterion，fib(18)，release 档 LTO=thin）：
 
 | 项 | 耗时 | 相对原生 |
 |---|---|---|
 | 手写 Rust fib(18) | 6.0 µs | 1× |
-| vitul AST fib(18) | 4.58 ms | ≈765× |
-| 编译 fib.vt（解析+类型检查） | 7.5 µs | — |
+| brook AST fib(18) | 4.58 ms | ≈765× |
+| 编译 fib.bk（解析+类型检查） | 7.5 µs | — |
 
 765× 符合 AST 解释器预期（boxed Value + HashMap 作用域 + 每次 clone）。阶段 2 目标：寄存器 VM + unboxed 槽位压到 3–8×。
 
@@ -650,11 +651,11 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 **性能数据**（Criterion，release 档；同机对比）：
 
-| 场景 | 手写 Rust | vitul VM | 相对 Rust | 阶段 1 AST |
+| 场景 | 手写 Rust | brook VM | 相对 Rust | 阶段 1 AST |
 |---|---|---|---|---|
 | fib(18) 递归 | 7.1 µs | 476 µs | ≈67× | 4.58 ms（765×）|
 | sum_to(200) 循环 | 277 ns | 8.45 µs | ≈30× | — |
-| 编译 fib.vt | — | 7.9 µs | — | 7.5 µs |
+| 编译 fib.bk | — | 7.9 µs | — | 7.5 µs |
 
 - 相比 AST 解释器提速 **6.4×（递归）**；VM 相比原生 **30–67×**。
 - **未达 3–8× 目标**（已记入 Q8）。原因：纯解释 VM 的架构税（取指/分派/间接索引）仍在；递归场景更差是因每次调用的帧开销。要突破须 JIT/AOT，但 JIT 被 Android 排除、AOT 牺牲热重载——这是约束组合下的合理落点，不粉饰。【2026-11-20 注：此处「JIT 被 Android 排除」已证伪，见 ADR-001 修订 / Q11，后续性能路线改按 ADR-012 草案评估】
@@ -729,7 +730,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 |---|---|---|---|---|
 | fib(18) 递归 | 7.4 µs | 476 µs | **211 µs** | 27.6× |
 | sum_to(200) 循环 | 280 ns | 8.45 µs | **2.41 µs** | 8.6× |
-| 编译 fib.vt | — | 8.0 µs | 7.8 µs | — |
+| 编译 fib.bk | — | 8.0 µs | 7.8 µs | — |
 
 **结论**：循环类工作负载已经摸到 3–8× 目标区间的边缘；纯递归停在 27.6×，因为每次调用都要真实压帧，没有内联空间——这是解释器架构税的残值，无法靠"再优化几条指令"消除。要继续压迫只能上 JIT/AOT，而这两条路与 Android/热重载的冲突已在 ADR-001/002 定论。
 
@@ -742,7 +743,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 **成果**
 
 1. **类型化宿主 API**：新增 `src/host.rs`（`ScriptType` / `FromValue` / `HostResult` / `Opaque<T>`）、`Engine::register_typed0..6`、导出宏 `register_fn!`。签名从 Rust 类型推导，回调拿具体类型；支持 0–6 参数、fallible `Result<T, Error>`、句柄、字符串、二元组。raw API 保留。
-2. **Android 交付**：`Cargo.toml` 加 `cdylib`；`src/ffi.rs` 导出 C ABI（`ms_call_i64` / `ms_last_error` / `ms_abi_version`，全部 `catch_unwind` 收口）；`examples/android_cli.rs` 原生 smoke test；`scripts/android_build.sh` 一键构建 + 有设备时 push 运行。安装 `cargo-ndk v4.1.2` 后打包出 `jniLibs/{arm64-v8a,armeabi-v7a}/libvitul.so`（759K / 538K）与两个 ABI 的 CLI（767K / 572K）。`readelf` 校验 ELF64-AArch64 / ELF32-ARM，符号表可见三个 `ms_*` 导出。
+2. **Android 交付**：`Cargo.toml` 加 `cdylib`；`src/ffi.rs` 导出 C ABI（`ms_call_i64` / `ms_last_error` / `ms_abi_version`，全部 `catch_unwind` 收口）；`examples/android_cli.rs` 原生 smoke test；`scripts/android_build.sh` 一键构建 + 有设备时 push 运行。安装 `cargo-ndk v4.1.2` 后打包出 `jniLibs/{arm64-v8a,armeabi-v7a}/libbrook.so`（759K / 538K）与两个 ABI 的 CLI（767K / 572K）。`readelf` 校验 ELF64-AArch64 / ELF32-ARM，符号表可见三个 `ms_*` 导出。
 3. **`.sbc` 字节码缓存**：新增 `src/cache.rs`，零依赖二进制格式；header 含 magic/version/源码 FNV-1a hash/host registry fingerprint；当时 65 个 opcode 由单张宏表生成 encode/decode（当前 71，见 ADR-010）；解码全程边界校验（寄存器、跳转目标、字符串 id、函数 id、builtin id、尾部字节）。API：`script_to_bytes` / `script_from_bytes` / `save_sbc` / `load_sbc` / `compile_cached` / `load_cached` / `reload_cached`。
 4. **测试（当时的阶段快照）**：从 24 增至 **40**（6 词法单测 + 6 缓存 + 3 FFI + 6 宏注册 + 18 集成 + 1 doctest），其中「全部 opcode 往返一致」是防 tag 漂移的硬护栏；当前测试数见文件头「当前状态」。
 
@@ -750,7 +751,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 | 场景 | 耗时 | 说明 |
 |---|---|---|
-| 内存编译 fib.vt（`load_str`） | 7.96 µs | 前端全流程 |
+| 内存编译 fib.bk（`load_str`） | 7.96 µs | 前端全流程 |
 | 内存解码 .sbc（`script_from_bytes`） | **1.52 µs** | 比编译快 **5.2×** |
 | `load_file`（读源 + 编译） | 97.11 µs | 一次文件 I/O |
 | `load_sbc`（读缓存 + 解码） | 83.20 µs | 一次文件 I/O |
@@ -770,19 +771,19 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **D-020 · `.sbc` 命中比直接编译慢**：见上表。定位为两次文件读取主导，不是解码慢。决策：保留严格 hash 校验（不用 mtime/size 偷换正确性），改为提供 `compile_cached` 内存源码路径，并在文档中明确 `load_cached` 只是便捷 API。
 - **D-021 · 脚本语法不含分号**：缓存测试脚本误写 `let p = ... ; p.0`，词法器报 `unexpected character ';'`。修正为换行分隔——语言规格「无分号」再次验证有效。
 - **D-022 · gas 按控制流计费负收益**：设想「直线指令不扣 gas、只扣分支/调用」能省检查。集中判断版 fib 252µs、内联到 17 臂版 fib 236µs，均慢于每指令版 191µs；Criterion 命名基线 A/B（同机各 25 样本）确认 fib 慢 29%、sum_to 慢 71%，且 v4 轮 Rust 基线更快，排除噪声。**排查**：每指令检查是循环顶部无条件直线代码、预测器近 100% 命中；17 个带冷 return 的判断反而污染分派臂的预测与 i-cache。**解决**：回退到每指令扣减，`max_steps` 语义文档同步改回。**影响**：省检查的直觉不等于省时间——热循环里「稳定的无条件操作」比「分散的条件操作」便宜，后续优化需实测而非推理。
-- **D-023 · 交接稿的「fib 尾位置 Ret」在本仓库是幻觉**：交接稿建议 ①b 消除 fib 的共享 Ret（叶 5→2 条），但字节码 dump 显示 `fib.vt` 用显式 `return n`，`compile_if` 结果 `r1` 从不被读、共享 Ret 属于尾部 `fib(n-1)+fib(n-2)`；`sum_to` 是 for 循环也不命中。**排查**：dump 两份字节码（真实 fib + 尾位置 if 改写版），确认后者 10 条→8 条但前者根本不产生该模式。**解决**：跳过 ①b，不引入 remap 表 / 跨块判定 / 副作用落点判定的静默错值风险。**影响**：外部建议必须对照本仓库实际产物核实，不能照搬基准假设。
+- **D-023 · 交接稿的「fib 尾位置 Ret」在本仓库是幻觉**：交接稿建议 ①b 消除 fib 的共享 Ret（叶 5→2 条），但字节码 dump 显示 `fib.bk` 用显式 `return n`，`compile_if` 结果 `r1` 从不被读、共享 Ret 属于尾部 `fib(n-1)+fib(n-2)`；`sum_to` 是 for 循环也不命中。**排查**：dump 两份字节码（真实 fib + 尾位置 if 改写版），确认后者 10 条→8 条但前者根本不产生该模式。**解决**：跳过 ①b，不引入 remap 表 / 跨块判定 / 副作用落点判定的静默错值风险。**影响**：外部建议必须对照本仓库实际产物核实，不能照搬基准假设。
 - **D-024 · ⑥a call/ret 瘦身零收益回退**：Frame 压 16B + 去 argv 暂存 + nregs 局部 + CallHost 直接索引，双模式全绿（新增 `tests/frame_packing.rs` 4 项）。**排查**：Criterion 命名基线严格 A/B（同会话紧邻两次，各 30 样本）fib 157.06→157.10µs 完全持平；sum_to 的 1.68 vs 1.84 差异出现在不执行 CallScript 的循环上，属布局噪声；Rust 基线同期波动 22% 证明机器噪声大。**解决**：fib 是同函数递归、窗口恒定，收益被调用开销淹没；为零收益引入 `u32↔usize` 转换与 base/ip 溢出面不划算，回退。**影响**：微架构瘦身对「指令数 × 固定开销」瓶颈无感，真正有效的仍是 ①a/③/⑤ 这类减少指令或消除检查的项。
 - **D-025 · ⑥b 预分配 regs 双向 A/B 信号矛盾回退**：`Vm::new` 按 `max_nregs × max_depth`（上限 2MiB）`with_capacity` 预留 regs，免深递归重分配，debug + release 54 项全绿。**排查**：Criterion 命名基线双向 A/B（各 100 样本）——正向 pre→post fib 151.60→142.47µs（−5.1%）看似正收益；反向 post→pre fib 146.92 vs 151.73µs（p=0.86 不显著）信号消失。同期 Rust 基线自身两向摆动 −1.4%/+4.0%（5.4 个百分点），无关基准（compile/decode，不触及 `Vm::new`）摆幅 ±37%。**解决**：两方向符号相反、控制基线抖动超过被测效应，判为机器噪声主导，回退。交接稿亦预警本项很可能负收益。**影响**：性能结论必须双向验证——单向「改善」可能是基线漂移；当控制基线自身抖动 > 被测效应时，任何单向结论都不可信。性能逐项优化八项至此全部评估完毕。
 
-- **D-026 · JIT 路线证据复核推翻 ADR-001 的事实前提**：roto 真机报告 + AOSP sepolicy 官方源码（`allow appdomain self:process execmem;`，commit `ad7df7b` / `public/app.te`；`app_neverallows.te` 无 execmem 禁令）证明「Android 无法执行动态生成的机器码」是错的；报告 §9「ColorOS 太宽松、不能外推到 AOSP」方向也反了——策略 B 本就是 AOSP 设计本意，真正依赖 OEM 的是直接 RWX（有策略 B 兜底）。**排查**：为避开二手博客误导，以官方源码原文为准；用受控实验量化成本——最小 cdylib（aarch64、strip）0.28→2.09 MiB（+1.81 MiB / 6.4×），真实项目 roto 3.87 MiB vs vitul 0.76 MiB。性能同口径：fib(20) VM 411.5 µs vs JIT 42.8 µs（9.6×）；sum_to(200) VM 1.73 µs vs JIT 131 ns（13.2×，**反转了「循环场景收益小」的预判**）。冷启动：JIT 完整编译 721 µs（其中解析+类型检查 200 µs）、Runtime 初始化 471 µs；VM 编译 8.6 µs / 缓存解码 1.8 µs → fib 2 次（含初始化 3.2 次）、sum_to 445 次（含初始化 740 次）调用回本。**解决**：修正 1.3 与 ADR-001 事实表述、新增 Q11 与 ADR-012 草案；架构决策仍维持 VM 优先，JIT 从「平台不可行」改为「成本权衡暂不上」。**影响**：排除性事实断言必须回到一手源码核对；成本直觉（包体）经受控实验证伪后，整个架构权衡可能翻转。所有临时基准文件与 `Cargo.toml` 改动均已还原，两个项目源码零残留。
+- **D-026 · JIT 路线证据复核推翻 ADR-001 的事实前提**：roto 真机报告 + AOSP sepolicy 官方源码（`allow appdomain self:process execmem;`，commit `ad7df7b` / `public/app.te`；`app_neverallows.te` 无 execmem 禁令）证明「Android 无法执行动态生成的机器码」是错的；报告 §9「ColorOS 太宽松、不能外推到 AOSP」方向也反了——策略 B 本就是 AOSP 设计本意，真正依赖 OEM 的是直接 RWX（有策略 B 兜底）。**排查**：为避开二手博客误导，以官方源码原文为准；用受控实验量化成本——最小 cdylib（aarch64、strip）0.28→2.09 MiB（+1.81 MiB / 6.4×），真实项目 roto 3.87 MiB vs brook 0.76 MiB。性能同口径：fib(20) VM 411.5 µs vs JIT 42.8 µs（9.6×）；sum_to(200) VM 1.73 µs vs JIT 131 ns（13.2×，**反转了「循环场景收益小」的预判**）。冷启动：JIT 完整编译 721 µs（其中解析+类型检查 200 µs）、Runtime 初始化 471 µs；VM 编译 8.6 µs / 缓存解码 1.8 µs → fib 2 次（含初始化 3.2 次）、sum_to 445 次（含初始化 740 次）调用回本。**解决**：修正 1.3 与 ADR-001 事实表述、新增 Q11 与 ADR-012 草案；架构决策仍维持 VM 优先，JIT 从「平台不可行」改为「成本权衡暂不上」。**影响**：排除性事实断言必须回到一手源码核对；成本直觉（包体）经受控实验证伪后，整个架构权衡可能翻转。所有临时基准文件与 `Cargo.toml` 改动均已还原，两个项目源码零残留。
 
 - **D-027 · 深度自查修复静默错值与边界绕过**：按自查优先级依次修复并逐项全量回归。① `lexer.rs` 字符串字面量改为收集原始字节后一次性 UTF-8 解码，修复中文字符串乱码与 `len("中文")==6`；② `codegen.rs` 让发散 if 分支继承非发散分支类型，修复 `then { return ... } else { f64 }` 后续运算按整数解释得到 `inf` 的静默错值；③ `typecheck.rs` 禁止 Tuple/Unit 的 `==`/`!=`，避免把 heap index 当值比较；④ `to_str` 限制为 i64/f64/bool/str，避免输出内部堆索引；⑤ `vm.rs` 每个 heap entry 计入固定开销，堵住零长字符串/空对象绕过 `with_heap_limit`；⑥ 宿主函数重名注册直接报错，避免 `.sbc` fingerprint 与孤儿 slot 不一致；⑦ `compile_cached` 缓存命中覆盖 `Script.name` 为本次调用名；⑧ 补除零、取模零、`max_depth`、UTF-8、发散分支、Tuple/Unit 相等、`to_str` 边界、空对象配额、重复注册、缓存名、crate 级快速上手 doctest 共 11 类回归与文档测试。**影响**：性能相关代码除 heap 计费定点修补外未动，优化结论不变；测试数从 54 增至 64。临时探针文件均已删除，最终 release 全量 64 项通过。
 
 - **D-028 · 诊断能力四件套（性能零影响、维护面可控）**：① **字符列号**——`lexer.rs::bump` 只在 UTF-8 首字节推进 `col`，续字节不计数。此前含中文的行按字节算列，`"中文" + 1` 报 2:22（人眼是 2:18），照着报错数永远数不准。② **调用栈**——`Error.trace: Vec<TraceFrame>`，由 `Vm::call` 在 `run` 返回 `Err` 后回放帧栈生成：最内层用错误自身的 span，外层用被调用点保存的恢复偏移（`code[ip-1]` 正是 call 指令）。**热路径零成本**：成功路径多一个 `match`，帧栈只在已经失败时才走一遍。③ **源码片段渲染**——新增 `src/diag.rs`（约 190 行，独立模块）：`Error::report(src, name)` / `Script::report(&err)` 输出 `--> 文件:行:列` + 源码行 + caret；caret 按**显示宽度**对齐（tab=4、CJK=2），深栈超过 12 帧省略中段。`Script` 新增 `source: Rc<str>`，缓存命中时由 `compile_cached` 补回，`.sbc` 本身不存源码。④ **宿主错误类型透传**——`CallHost` 不再把宿主错误压成 `ErrorKind::Runtime`。**为什么现在做**：这四项只碰错误路径和编译期，`Display` 保持单行（C ABI 错误缓冲区形状不变），`.sbc` 格式与版本不动，因此不触性能、不改缓存兼容性。**为什么不做**：运行时 `Span.start/end` 恒为 0（指令只存 line/col 两个 u32，是为分派循环体积换来的），所以运行时错误只有位置、没有高亮范围——这是设计权衡，不补。**验证**：Criterion 无回退（fib(18) 144.7µs vs 文档基线 157.9µs，sum_to(200) 1.54µs vs 1.63µs，编译 8.02µs vs 7.96µs，均在噪声内）；测试 107→118（新增 `tests/diagnostics.rs` 11 项：字符列号、ASCII 回归、四层调用栈位置精确断言、深栈截断、tab 与 CJK 的 caret 对齐、缓存脚本可渲染、宿主 `ErrorKind` 透传）。
 
-- **D-029 · 热函数里的错误构造必须冷提起（嵌套深度守卫的性能教训）**：给 `Parser` 加 `MAX_NESTING` 时，第一版把 `format!` 的错误构造直接写在 `enter()` 内。逻辑上「成功路径只多一次自增与比较」，但 `compile fib.vt` 实测 8.0→9.2 µs（+15%）。A/B 关掉守卫复测得 8.44 µs，确认差异来自守卫而非噪声——`enter()` 里塞进 `format!` 后函数体积超出内联阈值，递归下降的热函数不再内联，代价远超那次比较。**解决**：错误构造外提为 `#[cold] #[inline(never)] fn depth_error()`，`enter()` 加 `#[inline]`，回到 8.39 µs，守卫实际免费。**影响**：这类判断不能靠静态推理，必须 A/B——尤其当 `format!`/`vec!`/字符串拼接出现在被高频调用的函数里时；同一函数只要有一条冷分支把体积顶过阈值，整条热路径都会陪葬。同时保留一条方法论：A/B 要「关掉被测物」而不是「改别处」，否则测到的是机器漂移（本机 `compile` 基准历史摆幅曾达 ±37%，见 D-025）。
+- **D-029 · 热函数里的错误构造必须冷提起（嵌套深度守卫的性能教训）**：给 `Parser` 加 `MAX_NESTING` 时，第一版把 `format!` 的错误构造直接写在 `enter()` 内。逻辑上「成功路径只多一次自增与比较」，但 `compile fib.bk` 实测 8.0→9.2 µs（+15%）。A/B 关掉守卫复测得 8.44 µs，确认差异来自守卫而非噪声——`enter()` 里塞进 `format!` 后函数体积超出内联阈值，递归下降的热函数不再内联，代价远超那次比较。**解决**：错误构造外提为 `#[cold] #[inline(never)] fn depth_error()`，`enter()` 加 `#[inline]`，回到 8.39 µs，守卫实际免费。**影响**：这类判断不能靠静态推理，必须 A/B——尤其当 `format!`/`vec!`/字符串拼接出现在被高频调用的函数里时；同一函数只要有一条冷分支把体积顶过阈值，整条热路径都会陪葬。同时保留一条方法论：A/B 要「关掉被测物」而不是「改别处」，否则测到的是机器漂移（本机 `compile` 基准历史摆幅曾达 ±37%，见 D-025）。
 
-**验证（当时的阶段快照）**：当时 40 个测试全绿；`cargo build --release --lib` 零警告；`cargo ndk` 双 ABI 交叉编译通过；`readelf` 校验 ELF 架构与导出符号；Windows 本机 `cargo run --example android_cli` 输出 `vitul 0.1.0 / x86_64: check(Order{200,vip}, 1000) = (160, true)`，脚本逻辑等价验证通过。**本机 `adb devices` 为空、SDK 无 emulator 二进制与 AVD，Android 真机/模拟器运行未执行**（Q10）。
+**验证（当时的阶段快照）**：当时 40 个测试全绿；`cargo build --release --lib` 零警告；`cargo ndk` 双 ABI 交叉编译通过；`readelf` 校验 ELF 架构与导出符号；Windows 本机 `cargo run --example android_cli` 输出 `brook 0.1.0 / x86_64: check(Order{200,vip}, 1000) = (160, true)`，脚本逻辑等价验证通过。**本机 `adb devices` 为空、SDK 无 emulator 二进制与 AVD，Android 真机/模拟器运行未执行**（Q10）。
 
 
 **下一步**：① 连设备或装好模拟器后执行 `./scripts/android_build.sh` 完成 Q10；② 如需 Java/Kotlin 层，可在现有 C ABI 上做 JNI 桥（`System.loadLibrary` + native 方法）；③ Q8 的递归/循环性能改按 Q11 与 ADR-012 草案重新评估 JIT（原 ADR-001「Android 不可行」的事实前提已证伪），阶段 4 AOT 仍是备选。
@@ -820,7 +821,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 **①b · 尾位置 Ret 复制（跳过）**
 - **交接稿设想**：if 结果直接喂 Ret 时两分支各自 Ret 自己的值，省掉共享 result + 两条 Mov，fib 叶 5→2 条。
-- **本仓库不成立**：`fib.vt` 用显式 `return n`，`if n<2` 的 then 分支自己 Ret；函数返回值来自尾部 `fib(n-1)+fib(n-2)`。`compile_if` 结果寄存器 `r1` 从不被读，共享 Ret 属于尾部表达式——fib 根本不产生「尾位置 if 喂 Ret」模式。`sum_to` 是 `for` 循环，同样不命中。字节码 dump 实证（见下方开发日志）。
+- **本仓库不成立**：`fib.bk` 用显式 `return n`，`if n<2` 的 then 分支自己 Ret；函数返回值来自尾部 `fib(n-1)+fib(n-2)`。`compile_if` 结果寄存器 `r1` 从不被读，共享 Ret 属于尾部表达式——fib 根本不产生「尾位置 if 喂 Ret」模式。`sum_to` 是 `for` 循环，同样不命中。字节码 dump 实证（见下方开发日志）。
 - **结论**：收益为零却要引入 remap 表 / 跨基本块判定 / 副作用落点判定这类最容易静默算错的改动，不划算。跳过，把预算留给命中热路径的项。
 
 **⑥a · call/ret 瘦身（实现并严格 A/B 后回退）**
@@ -893,7 +894,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 **问题与解决**：`scripts/android_build.sh` 一键路径在 Git Bash 下 push 失败——MSYS 把 `/data/local/tmp/...` 改写成 `C:/Program Files/Git/data/...`（报 remote secure_mkdirs failed）。解决：push 命令加 `MSYS_NO_PATHCONV=1` 前缀（Git-for-Windows 专用变量，Linux/macOS 下无副作用）。**注意**：该变量会连本地路径转换一并关闭，push 的本地源路径需写 Windows 风格（`C:/...`）。
 
-**清理**：设备端 4 个测试文件（android_cli + 3 个 .vt）已删除，本地临时脚本目录已删除；jniLibs / target 为项目产物按原样保留（jniLibs 由修复前旧字节刷新为当前代码，属测试的预期产出）。
+**清理**：设备端 4 个测试文件（android_cli + 3 个 .bk）已删除，本地临时脚本目录已删除；jniLibs / target 为项目产物按原样保留（jniLibs 由修复前旧字节刷新为当前代码，属测试的预期产出）。
 
 ### 2026-11-21 · C ABI 句柄式脚本层落地（D-033）
 
@@ -944,7 +945,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 **D-035-1 · 测试脚本自踩桥接语义**：`register_fn!(engine, "sum3", ((i64, i64, i64)) -> i64, …)` 的 `((…))` 被 `$a:ty` 捕获为**一个元组类型参数**——脚本须传元组字面量 `sum3((a, b, c))`。这是宏语法的正确行为（元组作宿主参数正是 FromValue 的用途），测试照此修正。
 
 **量化结论（分层可行性，详见对话报告）**：
-- so_demo：**可接住，试点首选**。直接接住 ~120 个标量/str/bool 函数；元组化 ~15 类固定记录；Opaque+getter ~8 类变长记录集；Kotlin/JNI 层零改动。集成层需对齐：线程模型（rhai sync 跨线程缓存 vs vitul `!Send` 每线程 Engine）、取消策略（rhai on_progress 协作取消 vs vitul gas 硬中止 + 宿主函数内自查）、Scope 常量（9 颜色改零参函数，ARGS 0 使用可砍）。
+- so_demo：**可接住，试点首选**。直接接住 ~120 个标量/str/bool 函数；元组化 ~15 类固定记录；Opaque+getter ~8 类变长记录集；Kotlin/JNI 层零改动。集成层需对齐：线程模型（rhai sync 跨线程缓存 vs brook `!Send` 每线程 Engine）、取消策略（rhai on_progress 协作取消 vs brook gas 硬中止 + 宿主函数内自查）、Scope 常量（9 颜色改零参函数，ARGS 0 使用可砍）。
 - rhai_demo：**可接住但为宿主 API v2 工程**。~110 个标量函数直接接住；Task/Page 句柄天然映射 Opaque；~67 个 Map/Array 返回 + exec(Map 入参) 需重设计；253 个 try/catch 与 34 个脚本（6905 行）全部重写；diag.rhai 留作最后回归网；两处隐蔽语义点（字符串原地改、max_operations 长挂假设）。
 
 **验证**：177 项全绿（175 单测/集成 + 2 doctest）、零警告。

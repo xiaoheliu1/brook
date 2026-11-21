@@ -1,4 +1,4 @@
-# vitul 宿主集成指南（Rust 侧）
+# brook 宿主集成指南（Rust 侧）
 
 > **读者：会 Rust、要把引擎嵌进自己程序的开发者。** 只想写脚本？看 `docs/TUTORIAL.md`，那份不需要任何 Rust 知识。
 >
@@ -10,13 +10,13 @@
 
 ```toml
 [dependencies]
-vitul = { path = "../vitul" }
+brook = { path = "../brook" }
 ```
 
 ```rust
-use vitul::{register_fn, Engine, Value};
+use brook::{register_fn, Engine, Value};
 
-fn main() -> vitul::Result<()> {
+fn main() -> brook::Result<()> {
     let mut engine = Engine::new();
     register_fn!(engine, "log", (String), |s| println!("{}", s))?;
 
@@ -35,8 +35,8 @@ fn main() -> vitul::Result<()> {
 
 ```rust
 let script = engine.load_str(src)?;                    // 字符串
-let script = engine.load_file("scripts/task.vt")?;     // 文件
-let script = engine.compile(src, "task.vt")?;          // 显式命名（报错用）
+let script = engine.load_file("scripts/task.bk")?;     // 文件
+let script = engine.compile(src, "task.bk")?;          // 显式命名（报错用）
 
 let v = engine.call(&script, "函数名", vec![Value::I64(1)])?;   // 调用
 ```
@@ -86,7 +86,7 @@ println!("{}", script.report(&err));
 ## 6. Opaque\<T\>：不透明句柄
 
 ```rust
-use vitul::Opaque;
+use brook::Opaque;
 
 struct Player { name: String, hp: i64 }
 register_fn!(engine, "heal", (Opaque<Player>, i64) -> String, |p, amount| {
@@ -114,11 +114,11 @@ register_fn!(engine, "take3", ((i64, i64, i64)) -> i64, |t| t.0 + t.1 + t.2)?;
 ## 8. 热重载
 
 ```rust
-let mut script = engine.load_file("scripts/task.vt")?;
+let mut script = engine.load_file("scripts/task.bk")?;
 engine.call(&script, "main", vec![])?;
 
 // 文件改后原地换字节码；失败旧脚本原样保留
-engine.reload(&mut script, "scripts/task.vt")?;
+engine.reload(&mut script, "scripts/task.bk")?;
 ```
 
 `call(&Script)` 与 `reload(&mut Script)` 的借用规则天然防并发重载，无需锁。
@@ -144,7 +144,7 @@ let restored = engine.script_from_bytes(&bytes)?;
 let script = engine.compile_cached(src, "task", "cache/task.sbc")?;
 
 // 文件 + 旁边 .sbc
-let script = engine.load_cached("scripts/task.vt")?;
+let script = engine.load_cached("scripts/task.bk")?;
 ```
 
 诚实基准：磁盘路径比直接编译**慢**（两次 I/O ≈80µs vs 编译 8µs）。价值在「内存源码跳过编译」与「字节码独立交付」。缓存绑定宿主注册表指纹，注册表变了自动失效。格式 VERSION 当前 3。
@@ -164,12 +164,12 @@ std::thread::spawn(move || {
 
 ## 12. 公共函数库（约定式 import）
 
-**语言已内置 import（ADR-017）**：脚本作者写 `import "common"`，引擎从「当前脚本所在目录的 `common.vt`」载入并合并编译——宿主默认**零配置**。脚本作者视角见 TUTORIAL.md §4.8。
+**语言已内置 import（ADR-017）**：脚本作者写 `import "common"`，引擎从「当前脚本所在目录的 `common.bk`」载入并合并编译——宿主默认**零配置**。脚本作者视角见 TUTORIAL.md §4.8。
 
 宿主侧的配置只有两种（都是可选的）：
 
 ```rust
-// 便捷式：import "common" → <目录>/common.vt
+// 便捷式：import "common" → <目录>/common.bk
 let engine = Engine::new().set_import_dir("scripts/lib");
 
 // 完全自定义：assets / DB / 加密源码——名字到源码的映射由宿主决定
@@ -187,7 +187,7 @@ let engine = Engine::new().set_import_resolver(|name| {
 
 ```rust
 fn load_with_libs(engine: &Engine, lib_paths: &[&str], script_path: &str)
-    -> vitul::Result<vitul::Script>
+    -> brook::Result<brook::Script>
 {
     let mut combined = String::new();
     for p in lib_paths {
@@ -201,7 +201,7 @@ fn load_with_libs(engine: &Engine, lib_paths: &[&str], script_path: &str)
 
 ```rust
 fn load_with_libs(engine: &Engine, lib_paths: &[&str], script_path: &str)
-    -> vitul::Result<vitul::Script>
+    -> brook::Result<brook::Script>
 {
     let mut combined = String::new();
     for p in lib_paths {
@@ -228,7 +228,7 @@ use std::rc::Rc;
 let engine = Rc::new(RefCell::new(Engine::new()));
 
 // 目标脚本编译一次进缓存（对应 so_demo 的 AST_CACHE）
-let cache: Rc<RefCell<HashMap<String, vitul::Script>>> = /* ... */;
+let cache: Rc<RefCell<HashMap<String, brook::Script>>> = /* ... */;
 
 // 递归检测的名字栈（对应 so_demo 的 SCRIPT_STACK）——必须有，见下
 let stack: Rc<RefCell<Vec<String>>> = /* ... */;

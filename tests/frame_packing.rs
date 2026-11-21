@@ -6,9 +6,9 @@
 //! *different* `nregs` at each depth so a stale `nregs` corrupts the next
 //! call's window start and fails loudly.
 
-use vitul::engine::Engine;
-use vitul::error::Result;
-use vitul::value::Value;
+use brook::engine::Engine;
+use brook::error::Result;
+use brook::value::Value;
 
 fn run(src: &str, func: &str, args: Vec<Value>) -> Result<Value> {
     let engine = Engine::new();

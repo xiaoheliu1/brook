@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Android artifacts for vitul, then smoke-test on a device if one is
+# Build Android artifacts for brook, then smoke-test on a device if one is
 # attached. Works from Git Bash on Windows, Linux and macOS.
 #
 #   ./scripts/android_build.sh [output-dir]     # default: jniLibs
@@ -33,7 +33,7 @@ done
 mkdir -p "$OUT/cli"
 cp target/aarch64-linux-android/release/examples/android_cli "$OUT/cli/android_cli-arm64-v8a"
 cp target/armv7-linux-androideabi/release/examples/android_cli "$OUT/cli/android_cli-armeabi-v7a"
-echo "==> Artifacts: $OUT/{arm64-v8a,armeabi-v7a}/libvitul.so, $OUT/cli/*"
+echo "==> Artifacts: $OUT/{arm64-v8a,armeabi-v7a}/libbrook.so, $OUT/cli/*"
 
 if ! command -v adb >/dev/null 2>&1; then
   echo "==> adb not found: skipping device smoke test."

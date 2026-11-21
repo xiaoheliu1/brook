@@ -2,7 +2,7 @@
 //!
 //! 规则（脚本作者视角，见 TUTORIAL §4.7）：
 //!   * `import "名字"` 只能写在文件最前（所有 func 之前）
-//!   * 解析顺序：当前脚本所在目录的 `<名字>.vt`（子路径允许，`..`/绝对路径禁止）
+//!   * 解析顺序：当前脚本所在目录的 `<名字>.bk`（子路径允许，`..`/绝对路径禁止）
 //!   * 重复 import 幂等去重；循环 import 编译报错；撞名编译报错
 //!   * load_str（内存源码）不支持 import —— 明确报错，或宿主配置
 //!     set_import_dir / set_import_resolver
@@ -11,13 +11,13 @@
 //! 与 `tests/migration_so_demo.rs::cross_script_call_via_host_function`。
 
 use std::path::{Path, PathBuf};
-use vitul::{Engine, Value};
+use brook::{Engine, Value};
 
 struct TmpDir(PathBuf);
 
 impl TmpDir {
     fn new(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("vitul_import_{}_{}", std::process::id(), tag));
+        let dir = std::env::temp_dir().join(format!("brook_import_{}_{}", std::process::id(), tag));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         TmpDir(dir)
@@ -44,9 +44,9 @@ impl Drop for TmpDir {
 #[test]
 fn same_directory_import_and_call() {
     let dir = TmpDir::new("same_dir");
-    dir.write("common.vt", "func double(n) { n * 2 }");
+    dir.write("common.bk", "func double(n) { n * 2 }");
     let main = dir.write(
-        "task.vt",
+        "task.bk",
         "import \"common\"\n\nfunc main() {\n    let r = double(21)\n    log_helper(r)\n}\n\nfunc log_helper(v) { v }",
     );
 
@@ -61,9 +61,9 @@ fn same_directory_import_and_call() {
 #[test]
 fn subdirectory_import_works() {
     let dir = TmpDir::new("subdir");
-    dir.write("lib/net.vt", "func ping() { 1 }");
+    dir.write("lib/net.bk", "func ping() { 1 }");
     let main = dir.write(
-        "task.vt",
+        "task.bk",
         "import \"lib/net\"\n\nfunc main() { ping() }",
     );
 
@@ -75,11 +75,11 @@ fn subdirectory_import_works() {
 #[test]
 fn imports_are_order_independent_and_idempotent() {
     let dir = TmpDir::new("order");
-    dir.write("a.vt", "func fa() { 1 }");
-    dir.write("b.vt", "func fb() { 2 }");
+    dir.write("a.bk", "func fa() { 1 }");
+    dir.write("b.bk", "func fb() { 2 }");
     // 两个 import 顺序互换、重复 import 同一文件——都应正常编译
     let main = dir.write(
-        "task.vt",
+        "task.bk",
         "import \"b\"\nimport \"a\"\nimport \"a\"\n\nfunc main() { fa() + fb() }",
     );
 
@@ -91,11 +91,11 @@ fn imports_are_order_independent_and_idempotent() {
 #[test]
 fn imports_are_relative_to_the_importing_script() {
     let dir = TmpDir::new("relative");
-    // lib/net.vt 自己再 import 同目录（lib/）下的 codec.vt —— 相对导入者解析
-    dir.write("lib/codec.vt", "func enc(n) { n + 1 }");
-    dir.write("lib/net.vt", "import \"codec\"\n\nfunc ping2() { enc(41) }");
+    // lib/net.bk 自己再 import 同目录（lib/）下的 codec.bk —— 相对导入者解析
+    dir.write("lib/codec.bk", "func enc(n) { n + 1 }");
+    dir.write("lib/net.bk", "import \"codec\"\n\nfunc ping2() { enc(41) }");
     let main = dir.write(
-        "task.vt",
+        "task.bk",
         "import \"lib/net\"\n\nfunc main() { ping2() }",
     );
 
@@ -107,9 +107,9 @@ fn imports_are_relative_to_the_importing_script() {
 #[test]
 fn cycle_imports_are_compile_errors() {
     let dir = TmpDir::new("cycle");
-    dir.write("a.vt", "import \"b\"\n\nfunc fa() { 1 }");
-    dir.write("b.vt", "import \"a\"\n\nfunc fb() { 2 }");
-    let main = dir.write("task.vt", "import \"a\"\n\nfunc main() { fa() }");
+    dir.write("a.bk", "import \"b\"\n\nfunc fa() { 1 }");
+    dir.write("b.bk", "import \"a\"\n\nfunc fb() { 2 }");
+    let main = dir.write("task.bk", "import \"a\"\n\nfunc main() { fa() }");
 
     let engine = Engine::new();
     let err = engine.load_file(&main).unwrap_err();
@@ -119,10 +119,10 @@ fn cycle_imports_are_compile_errors() {
 #[test]
 fn name_collision_with_library_is_a_compile_error() {
     let dir = TmpDir::new("collision");
-    dir.write("common.vt", "func double(n) { n * 2 }");
+    dir.write("common.bk", "func double(n) { n * 2 }");
     // 业务脚本定义了同名函数 → duplicate definition
     let main = dir.write(
-        "task.vt",
+        "task.bk",
         "import \"common\"\n\nfunc double(n) { n + 1 }\n\nfunc main() { double(1) }",
     );
 
@@ -134,11 +134,11 @@ fn name_collision_with_library_is_a_compile_error() {
 #[test]
 fn path_guards_reject_escape_attempts() {
     let dir = TmpDir::new("guards");
-    dir.write("task.vt", "import \"../escape\"\n\nfunc main() { 1 }");
+    dir.write("task.bk", "import \"../escape\"\n\nfunc main() { 1 }");
 
     let engine = Engine::new();
     // .. 回溯被路径护栏拒绝（编译错误，不会读到目录树外的文件）
-    let err = engine.load_file(dir.path().join("task.vt")).unwrap_err();
+    let err = engine.load_file(dir.path().join("task.bk")).unwrap_err();
     assert!(
         err.message.contains("不允许 '.' / '..'"),
         "{}",
@@ -147,7 +147,7 @@ fn path_guards_reject_escape_attempts() {
 
     // 绝对路径同样拒绝
     let abs = dir
-        .write("abs.vt", "import \"/etc/passwd\"\n\nfunc main() { 1 }");
+        .write("abs.bk", "import \"/etc/passwd\"\n\nfunc main() { 1 }");
     let err = engine.load_file(&abs).unwrap_err();
     assert!(
         err.message.contains("相对路径"),
@@ -171,7 +171,7 @@ fn load_str_with_import_reports_clearly() {
 
     // 宿主配置 import 目录后，load_str 的 import 也能解析
     let dir = TmpDir::new("load_str_dir");
-    dir.write("common.vt", "func double(n) { n * 2 }");
+    dir.write("common.bk", "func double(n) { n * 2 }");
     let engine = Engine::new().set_import_dir(dir.path());
     let script = engine
         .load_str("import \"common\"\n\nfunc main() { double(21) }")
@@ -196,7 +196,7 @@ fn set_import_resolver_overrides_file_lookup() {
 #[test]
 fn cache_invalidates_when_library_changes() {
     let dir = TmpDir::new("cache_invalidate");
-    let lib = dir.write("lib/common.vt", "func double(n) { n * 2 }");
+    let lib = dir.write("lib/common.bk", "func double(n) { n * 2 }");
     let engine = Engine::new().set_import_dir(dir.path().join("lib"));
 
     let src = "import \"common\"\n\nfunc main() { double(21) }";
@@ -214,9 +214,9 @@ fn cache_invalidates_when_library_changes() {
 #[test]
 fn hot_reload_refreshes_imported_libraries() {
     let dir = TmpDir::new("reload_import");
-    let lib = dir.write("lib/common.vt", "func double(n) { n * 2 }");
+    let lib = dir.write("lib/common.bk", "func double(n) { n * 2 }");
     let main = dir.write(
-        "task.vt",
+        "task.bk",
         "import \"common\"\n\nfunc main() { double(21) }",
     );
 

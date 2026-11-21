@@ -8,7 +8,7 @@
 //! `else if` path that once slipped past the guard). Seeds are fixed so any
 //! failure reproduces exactly.
 
-use vitul::Engine;
+use brook::Engine;
 
 /// xorshift64* — deterministic, dependency-free.
 struct Rng(u64);

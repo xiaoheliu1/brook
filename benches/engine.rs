@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use vitul::engine::Engine;
-use vitul::value::Value;
+use brook::engine::Engine;
+use brook::value::Value;
 
 /// Reference Rust implementation. `#[inline(never)]` + black_box keep LLVM
 /// from constant-folding the recursion into closed form, giving a fair
@@ -16,7 +16,7 @@ fn rust_fib(n: i64) -> i64 {
 
 fn criterion_benchmark(c: &mut Criterion) {
     let engine = Engine::new();
-    let script = engine.load_file("examples/fib.vt").expect("load fib.vt");
+    let script = engine.load_file("examples/fib.bk").expect("load fib.bk");
 
     // Sanity: VM produces the same answer as hand-written Rust.
     assert_eq!(
@@ -30,7 +30,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| rust_fib(black_box(n)))
     });
 
-    c.bench_function("2_vitul VM fib(18)", |b| {
+    c.bench_function("2_brook VM fib(18)", |b| {
         b.iter(|| {
             engine
                 .call(&script, "fib", vec![Value::I64(n)])
@@ -61,40 +61,40 @@ fn criterion_benchmark(c: &mut Criterion) {
         Value::I64(rust_sum(nloop))
     );
     c.bench_function("3_rust sum_to(200)", |b| b.iter(|| rust_sum(black_box(nloop))));
-    c.bench_function("4_vitul VM sum_to(200)", |b| {
+    c.bench_function("4_brook VM sum_to(200)", |b| {
         b.iter(|| engine.call(&loop_script, "sum_to", vec![Value::I64(nloop)]).unwrap())
     });
 
-    let src = std::fs::read_to_string("examples/fib.vt").unwrap();
-    c.bench_function("5_vitul compile fib.vt", |b| {
+    let src = std::fs::read_to_string("examples/fib.bk").unwrap();
+    c.bench_function("5_brook compile fib.bk", |b| {
         b.iter(|| engine.load_str(&src).unwrap())
     });
 
     // `.sbc` cache: full compile from a file vs a cache hit (and pure decode).
-    let dir = std::env::temp_dir().join(format!("vitul_bench_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("brook_bench_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("fib.vt");
+    let file = dir.join("fib.bk");
     std::fs::write(&file, &src).unwrap();
     engine.load_cached(&file).expect("populate cache");
     let sbc = file.with_extension("sbc");
     assert!(sbc.exists());
-    c.bench_function("6_vitul load_file (full compile)", |b| {
+    c.bench_function("6_brook load_file (full compile)", |b| {
         b.iter(|| engine.load_file(&file).unwrap())
     });
-    c.bench_function("7_vitul load_cached (sbc hit)", |b| {
+    c.bench_function("7_brook load_cached (sbc hit)", |b| {
         b.iter(|| engine.load_cached(&file).unwrap())
     });
-    c.bench_function("8_vitul load_sbc (decode only)", |b| {
+    c.bench_function("8_brook load_sbc (decode only)", |b| {
         b.iter(|| engine.load_sbc(&sbc).unwrap())
     });
 
     // Pure in-memory comparison: no filesystem overhead in either path. This
     // isolates whether decoding bytecode is actually cheaper than compiling.
     let sbc_bytes = std::fs::read(&sbc).unwrap();
-    c.bench_function("9_vitul compile (memory)", |b| {
+    c.bench_function("9_brook compile (memory)", |b| {
         b.iter(|| engine.load_str(black_box(&src)).unwrap())
     });
-    c.bench_function("10_vitul decode sbc (memory)", |b| {
+    c.bench_function("10_brook decode sbc (memory)", |b| {
         b.iter(|| engine.script_from_bytes(black_box(&sbc_bytes)).unwrap())
     });
 }

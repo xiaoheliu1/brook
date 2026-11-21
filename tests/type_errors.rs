@@ -6,7 +6,7 @@
 //! direction for every place that reports a mismatch, so a future refactor
 //! cannot quietly flip it again.
 
-use vitul::{Engine, ErrorKind};
+use brook::{Engine, ErrorKind};
 
 fn type_err(src: &str) -> String {
     let engine = Engine::new();

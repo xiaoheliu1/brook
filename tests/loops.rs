@@ -7,9 +7,9 @@
 //! would spin forever on the same index, which is exactly what
 //! `for_continue_still_advances` guards.
 
-use vitul::engine::Engine;
-use vitul::error::Result;
-use vitul::value::Value;
+use brook::engine::Engine;
+use brook::error::Result;
+use brook::value::Value;
 
 #[test]
 fn while_break_exits_early() -> Result<()> {
@@ -213,7 +213,7 @@ fn break_inside_if_without_loop_is_rejected() {
 /// freshly compiled one.
 #[test]
 fn cached_script_preserves_loop_targets() -> Result<()> {
-    let dir = std::env::temp_dir().join(format!("vitul_loops_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("brook_loops_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("loops.sbc");
 
