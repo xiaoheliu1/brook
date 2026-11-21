@@ -903,6 +903,12 @@ fn faq_common_pitfalls() {
         .unwrap_err();
     assert!(err.message.contains("the maximum is 8"), "{}", err.message);
 
+    // 函数不能嵌套定义：func 只能写在最外层
+    let err = engine
+        .load_str("func main() {\n    func inner() { 1 }\n    inner()\n}")
+        .unwrap_err();
+    assert!(err.message.contains("unexpected token Func"), "{}", err.message);
+
     // 元组字面量同样上限 8
     let err = engine
         .load_str("func go() { (1, 2, 3, 4, 5, 6, 7, 8, 9) }")
