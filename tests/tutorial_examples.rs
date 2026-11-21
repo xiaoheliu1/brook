@@ -596,6 +596,57 @@ fn one_engine_per_thread() {
     }
 }
 
+#[test]
+fn tuples_deep_dive() {
+    let engine = Engine::new();
+
+    // 单元素元组要带尾逗号；不带逗号的括号只是分组
+    let script = engine.load_str("func f() { let s = (1,)\n s.0 }").unwrap();
+    assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(1));
+
+    // 嵌套元组连点取值
+    let script = engine.load_str("func f() { let p = ((1, 2), (3, 4))\n p.1.0 }").unwrap();
+    assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(3));
+
+    // 索引必须是字面量（取第几个在编译期确定）
+    let err = engine.load_str("func f(t, i) { t.i }").unwrap_err();
+    assert!(err.message.contains("expected tuple index"), "{}", err.message);
+
+    // 已知长度的越界是编译错误
+    let err = engine.load_str("func f() { let t = (1, 2)\n t.5 }").unwrap_err();
+    assert!(err.message.contains("tuple index 5 out of range"), "{}", err.message);
+
+    // 元组相等被禁止（内部是堆索引，比相等会静默错值）
+    let err = engine.load_str("func f() { (1, 2) == (1, 2) }").unwrap_err();
+    assert!(err.message.contains("equality"), "{}", err.message);
+
+    // 标志位模式：用 (ok, value) 表达"可能失败"
+    let script = engine
+        .load_str(
+            "func safe_div(a: f64, b: f64) {\n    if b == 0.0 {\n        (false, 0.0)\n    } else {\n        (true, a / b)\n    }\n}\n\
+             func use2() {\n    let ok = safe_div(10.0, 2.0)\n    if ok.0 {\n        ok.1\n    } else {\n        0.0\n    }\n}",
+        )
+        .unwrap();
+    assert_eq!(engine.call(&script, "use2", vec![]).unwrap(), Value::F64(5.0));
+
+    // "至少 N 元"推断：宿主传更长的元组，多出的元素无害
+    let script = engine.load_str("func first2(t) { t.0 * 10 + t.1 }").unwrap();
+    assert_eq!(
+        engine
+            .call(
+                &script,
+                "first2",
+                vec![Value::Tuple(vec![
+                    Value::I64(1),
+                    Value::I64(2),
+                    Value::I64(99)
+                ])]
+            )
+            .unwrap(),
+        Value::I64(12)
+    );
+}
+
 // ===========================================================================
 // §2.4 补充：整数边界（FAQ Q13）
 // ===========================================================================

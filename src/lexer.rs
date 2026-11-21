@@ -10,17 +10,23 @@ pub struct Lexer<'a> {
     pos: usize,
     line: usize,
     col: usize,
+    /// 上一个发射的 token 是否为 `.`。Dot 之后的数字只按整数读（不吞
+    /// `.小数`/指数）：否则 `t.1.0` 里的 `1.0` 会被整体读成浮点字面量，
+    /// 嵌套元组的索引链（`t.0.1`）无法表达。普通位置的 `1.5`、`2e3`
+    /// 不受影响。
+    prev_dot: bool,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0, line: 1, col: 1 }
+        Self { src: src.as_bytes(), pos: 0, line: 1, col: 1, prev_dot: false }
     }
 
     pub fn tokenize(mut self) -> Result<Vec<Token>> {
         let mut out = Vec::new();
         loop {
             let tok = self.next_token()?;
+            self.prev_dot = tok.kind == TokenKind::Dot;
             let done = tok.kind == TokenKind::Eof;
             out.push(tok);
             if done {
@@ -173,14 +179,18 @@ impl<'a> Lexer<'a> {
                 self.bump();
             }
             let mut is_float = false;
-            if self.peek() == Some(b'.') && self.peek2().is_some_and(|d| d.is_ascii_digit()) {
+            // Dot 后的数字是索引链的一段（`t.1.0`），不吞 `.小数`。
+            if !self.prev_dot
+                && self.peek() == Some(b'.')
+                && self.peek2().is_some_and(|d| d.is_ascii_digit())
+            {
                 is_float = true;
                 self.bump(); // '.'
                 while matches!(self.peek(), Some(d) if d.is_ascii_digit()) {
                     self.bump();
                 }
             }
-            if matches!(self.peek(), Some(b'e') | Some(b'E')) {
+            if !self.prev_dot && matches!(self.peek(), Some(b'e') | Some(b'E')) {
                 // Only consume exponent if followed by optional sign and a digit.
                 let save = self.pos;
                 let save_line = self.line;
