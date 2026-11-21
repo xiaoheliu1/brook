@@ -531,7 +531,7 @@ fn cross_script_call_via_host_function() {
     // 变体（call_script_s / call_script_is / … 组合爆炸）。这就是为什么
     // call_script 适合任务编排（粗粒度、字符串进出），而函数库（细粒度、
     // 强类型、任意签名）应该用宿主拼接——拼接下签名编译期检查、类型自由。
-    let script_str = engine.borrow().load_str("func name() { \"文本\" }").unwrap();
+    let script_str = engine.borrow().load_str("func name(n) { \"文本\" }").unwrap();
     cache.borrow_mut().insert("str.ms".into(), script_str);
     let caller = engine
         .borrow()
