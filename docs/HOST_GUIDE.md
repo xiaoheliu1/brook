@@ -182,6 +182,52 @@ fn load_with_libs(engine: &Engine, lib_paths: &[&str], script_path: &str)
 
 顺序无关；同名冲突编译报错（checker 区分宿主碰撞与脚本内部重复）；缓存按拼接后完整文本 hash，lib 改动自动失效所有依赖脚本；报错行号按拼接后文本算。
 
+## 12.1 跨脚本调用（`call_script` 模式）
+
+让脚本 A 调用脚本 B 里的指定函数：注册一个宿主函数 `call_script(脚本名, 函数名)`，闭包内用**共享的引擎实例**执行目标函数。完整参考实现：`tests/migration_so_demo.rs::cross_script_call_via_host_function`。
+
+```rust
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+// 宿主持有共享引擎（Rc<RefCell<Engine>>）；嵌套调用期间全是不可变借用
+let engine = Rc::new(RefCell::new(Engine::new()));
+
+// 目标脚本编译一次进缓存（对应 so_demo 的 AST_CACHE）
+let cache: Rc<RefCell<HashMap<String, vitul::Script>>> = /* ... */;
+
+// 递归检测的名字栈（对应 so_demo 的 SCRIPT_STACK）——必须有，见下
+let stack: Rc<RefCell<Vec<String>>> = /* ... */;
+
+register_fn!(engine.borrow_mut(), "call_script",
+    (String, String) -> Result<(bool, i64), Error>,
+    move |script_name, func| {
+        if stack.borrow().iter().any(|s| s == &script_name) {
+            return Err(Error::runtime(format!("跨脚本递归: {}", script_name)));
+        }
+        stack.borrow_mut().push(script_name.clone());
+        let inner = (|| {
+            let eng = engine.borrow();
+            let script = cache.borrow().get(&script_name).cloned()
+                .ok_or_else(|| Error::runtime(format!("脚本不存在: {}", script_name)))?;
+            let v = eng.call(&script, &func, vec![Value::I64(6)])?;
+            match v { Value::I64(n) => Ok((true, n)), _ => Ok((true, 0)) }
+        })();
+        stack.borrow_mut().pop();
+        inner
+    })?;
+```
+
+**四件事缺一就有坑**：
+
+1. **共享引擎**：`Rc<RefCell<Engine>>`——嵌套 `engine.call` 全是不可变借用（`call` 只拿 `&self`），RefCell 合法；注册表共享 → 目标脚本也能调宿主函数
+2. **递归检测（必须）**：每次嵌套 `call` 是**全新 VM/全新 gas**——引擎的 gas 拦不住 A→B→A 跨 VM 无限嵌套，只有宿主的名字栈能拦
+3. **脚本缓存**：`HashMap<String, Script>` 免重复编译；`Script` 是 `Clone` 的 `Rc` 背衬结构，同线程内自由持有
+4. **封送设计**：返回形状固定（如 `(bool, i64)`）意味着其他类型被**静默吞掉**（POC 断言：str 返回吞成 `(true, 0)` 无报错）——要么按签名注册变体（组合爆炸），要么约束「跨脚本调用只传字符串/整数」（任务编排定位）。**细粒度强类型的函数复用走 §12 拼接，别用这个**
+
+已知代价：闭包捕获引擎 `Rc` 形成环 → 引擎延迟释放（长生命周期宿主可接受，可用 `Weak` 打破）。定位原则：**拼接管函数库（细粒度），call_script 管任务编排（粗粒度）**，两者共存不冲突。
+
 ## 13. C ABI（Android / JNI）
 
 `src/ffi.rs` 导出两层：
