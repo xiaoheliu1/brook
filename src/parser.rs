@@ -227,7 +227,22 @@ impl Parser {
         Ok(FuncDecl { name, params, ret, body, span })
     }
 
+    /// 类型文法的深度守卫（D-046 3.3）。`parse_type` 递归产生嵌套
+    /// `Ty::Tuple` / `Ty::Arr`，而这些类型进入 AST 后被 `Drop`、
+    /// `ty::render`、typecheck 的 `resolve`/`occurs`、cache 的
+    /// `write_ty`/`read_ty` 全部递归处理——不设上限就把 `MAX_NESTING`
+    /// 注释里"bounds every later stage"的论断砸出一个洞：约 2 万层
+    /// `(i64)` 嵌套（40 KB 源码）即可在解析期栈溢出 abort，
+    /// `catch_unwind` 抓不住。与表达式侧同一个上限、同一个报错。
     fn parse_type(&mut self) -> Result<Ty> {
+        let span = self.peek_span();
+        self.enter(span)?;
+        let result = self.parse_type_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_type_inner(&mut self) -> Result<Ty> {
         match self.peek().clone() {
             TokenKind::Ident(name) => {
                 self.bump();

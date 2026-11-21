@@ -341,6 +341,12 @@ impl Engine {
         // Keep `Script::report` pointing at the text that produced this
         // bytecode; otherwise carets would be placed against the old file.
         script.source = fresh.source;
+        // deps 同步更新（D-046 5.1）：漏掉这一行会让热重载后的脚本带着
+        // 旧依赖清单——后续 save_sbc 把它写进缓存，compile_cached 校验的
+        // 就是错误的依赖集（例如 reload 前后 import_dir 变化时，缓存可能
+        // 依据旧路径的文件判定"新鲜"而服役旧字节码）。reload_cached 用
+        // `*script = ...` 不受影响；这里对齐两条路径。
+        script.deps = fresh.deps;
         Ok(())
     }
 

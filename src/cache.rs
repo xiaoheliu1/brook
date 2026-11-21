@@ -126,7 +126,17 @@ fn write_ty(w: &mut Writer, ty: &Ty) {
     }
 }
 
+/// 类型嵌套的解码上限：与 parser 的 `MAX_NESTING` 同值。每个嵌套层只需
+/// 5 字节（tag + 长度），1 MiB 的 .sbc 能编码 20 万层——没有这条限制，
+/// `read_ty` 的递归就是又一个解码期栈溢出 abort（D-046 3.3）。
 fn read_ty(r: &mut Reader<'_>) -> Result<Ty> {
+    read_ty_at(r, 0)
+}
+
+fn read_ty_at(r: &mut Reader<'_>, depth: usize) -> Result<Ty> {
+    if depth > crate::parser::MAX_NESTING {
+        return Err(Error::io("cache: type nesting too deep"));
+    }
     Ok(match r.u8()? {
         1 => Ty::I64,
         2 => Ty::F64,
@@ -137,12 +147,12 @@ fn read_ty(r: &mut Reader<'_>) -> Result<Ty> {
             let n = r.u32()? as usize;
             if n > r.buf.len() { return Err(Error::io("cache: implausible tuple length")); }
             let mut ts = Vec::with_capacity(n);
-            for _ in 0..n { ts.push(read_ty(r)?); }
+            for _ in 0..n { ts.push(read_ty_at(r, depth + 1)?); }
             Ty::Tuple(ts)
         }
         7 => Ty::Var(usize::try_from(r.u64()?).map_err(|_| Error::io("cache: var id overflow"))?),
         8 => Ty::Unit,
-        9 => Ty::Arr(Box::new(read_ty(r)?)),
+        9 => Ty::Arr(Box::new(read_ty_at(r, depth + 1)?)),
         other => return Err(Error::io(format!("cache: unknown type tag {other}"))),
     })
 }

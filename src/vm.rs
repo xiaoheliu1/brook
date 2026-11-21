@@ -214,8 +214,26 @@ impl<'a> Vm<'a> {
                 args.len()
             )));
         }
+        // 纵深防御（validate 已拦，这里是 safe-API 侧的第二道）：实参写入
+        // 上界是 params.len()，窗口只有 nregs 格——两者在缓存路径上独立，
+        // 编译产物恒满足，但这条约束必须在这里也成立才没有 unchecked 越界。
+        if f.params.len() > f.nregs as usize {
+            return Err(Error::runtime(
+                "function signature exceeds its register window (corrupt program)",
+            ));
+        }
         let nregs = f.nregs as usize;
         let ret_ty = f.ret.clone();
+
+        // 可重入防护（D-046 3.2）：错误路径刻意保留 frames 供 capture_trace，
+        // 成功路径的底帧也不 pop——复用同一个 `Vm` 会带着陈旧帧再次进入
+        // `run()`，Ret 时恢复出旧的 base/ip/code，指向已经缩小的寄存器窗口
+        // 之外的地址（unchecked 写）。`Engine::call` 每次 new 一个 Vm 所以
+        // 不会踩到，但 `Vm` 是 pub 的 safe API：重置到 `Vm::new` 后的初始
+        // 状态（常量池长度 + 零字节计费），让复用语义干净。
+        self.frames.clear();
+        self.heap.truncate(self.program.strings.len());
+        self.heap_bytes = 0;
 
         self.regs.clear();
         self.regs.resize(nregs, Slot(0));
@@ -744,10 +762,13 @@ impl<'a> Vm<'a> {
         span: Span,
         f: F,
     ) -> Result<()> {
-        // `to_string` sidesteps holding a borrow of `self.heap` across `set`.
-        let x = self.heap_str(self.regs[base + a as usize].as_heap(), span)?.to_string();
-        let y = self.heap_str(self.regs[base + b as usize].as_heap(), span)?.to_string();
-        let r = f(&x, &y);
+        // 无拷贝比较（D-046 4.3）：旧实现的两次 `to_string` 是纯浪费——
+        // NLL 下读操作放块里，借用随块结束释放，写寄存器在块外照常进行。
+        let r = {
+            let x = self.heap_str(self.regs[base + a as usize].as_heap(), span)?;
+            let y = self.heap_str(self.regs[base + b as usize].as_heap(), span)?;
+            f(x, y)
+        };
         self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
         Ok(())
     }
@@ -888,9 +909,13 @@ impl<'a> Vm<'a> {
             Ty::F64 => Ok(Value::F64(slot.as_f64())),
             Ty::Bool => Ok(Value::Bool(slot.as_bool())),
             Ty::Unit => Ok(Value::Unit),
-            Ty::Str => Ok(Value::Str(Rc::from(
-                self.heap_str(slot.as_heap(), Span::synthetic())?,
-            ))),
+            // `Rc::from(&str)` 会重新分配并 memcpy 整个字符串；堆里本来就
+            // 躺着现成的 `Rc<str>`，克隆指针即可（D-046 4.2：此前每次向
+            // 宿主传字符串、每次 `Engine::call` 返回字符串都全量复制）。
+            Ty::Str => match self.heap.get(slot.as_heap()) {
+                Some(HeapObj::Str(s)) => Ok(Value::Str(Rc::clone(s))),
+                _ => Err(Error::runtime("expected string in slot")),
+            },
             Ty::Handle(_) => match self.heap.get(slot.as_heap()) {
                 Some(HeapObj::Handle(h)) => Ok(Value::Handle(h.clone())),
                 _ => Err(Error::runtime("expected handle in slot")),
@@ -996,10 +1021,12 @@ impl<'a> Vm<'a> {
                 let hay_idx = self.regs[at(0)].as_heap();
                 let needle = self.regs[at(1)];
                 match self.heap.get(hay_idx) {
-                    // String: substring containment.
+                    // String: substring containment, zero-copy（D-046 4.3；
+                    // 旧实现每次调用 to_string 两份全量拷贝）。
                     Some(HeapObj::Str(s)) => {
-                        let b = self.heap_str(self.regs[at(1)].as_heap(), span)?.to_string();
-                        Ok(Slot(if s.contains(&b) { 1 } else { 0 }))
+                        let needle_idx = self.regs[at(1)].as_heap();
+                        let needle_s = self.heap_str(needle_idx, span)?;
+                        Ok(Slot(if s.contains(needle_s) { 1 } else { 0 }))
                     }
                     // Array/tuple: element scan with structural equality.
                     Some(HeapObj::Arr(items)) => Ok(Slot(
@@ -1015,13 +1042,24 @@ impl<'a> Vm<'a> {
                 if n != 3 {
                     return Err(err_at("builtin arity", span));
                 }
-                let s = self.heap_str(self.regs[at(0)].as_heap(), span)?.to_string();
-                let start = self.regs[at(1)].as_i64().max(0) as usize;
-                let len = self.regs[at(2)].as_i64().max(0) as usize;
-                let chars: Vec<char> = s.chars().collect();
-                let st = start.min(chars.len());
-                let end = (start + len).min(chars.len());
-                let out: String = chars[st..end].iter().collect();
+                // O(start+len) 字符定位，不再收集整个 `Vec<char>`（旧实现
+                // 每次调用 4 字节/char 的中间分配）；`start + len` 的加法
+                // 也随之消失——它在 32 位目标上是真实的溢出点
+                // （`i64::MAX as usize` 截断回绕后 st>end → slice panic，
+                // D-046 3.10）。
+                let out = {
+                    let s = self.heap_str(self.regs[at(0)].as_heap(), span)?;
+                    let start = self.regs[at(1)].as_i64().max(0) as usize;
+                    let len = self.regs[at(2)].as_i64().max(0) as usize;
+                    let st = s.char_indices().nth(start).map(|(i, _)| i).unwrap_or(s.len());
+                    let en = s
+                        .char_indices()
+                        .skip(start)
+                        .nth(len)
+                        .map(|(i, _)| i)
+                        .unwrap_or(s.len());
+                    s[st..en].to_string()
+                };
                 self.intern_runtime_str(out)
             }
             TO_I64 => {

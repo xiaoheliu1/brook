@@ -21,6 +21,19 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
         if code_len == 0 {
             return Err(Error::io(format!("validate: `{}` has no instructions", f.name)));
         }
+        // 参数写入上界是 params.len()（`Vm::call` 把实参放进窗口前段），
+        // 而寄存器窗口只有 nregs 格。编译产物恒满足（nregs 从 params 起算），
+        // 但恶意构造的 .sbc 可以让两者各自独立——这里必须堵住，否则
+        // `Vm::call` 的 unchecked 索引会写出窗口之外（真正的堆越界写，
+        // catch_unwind 救不了）。审查 D-046 的 3.1。
+        if f.params.len() > nregs {
+            return Err(Error::io(format!(
+                "validate: `{}`: params {} > nregs {}",
+                f.name,
+                f.params.len(),
+                nregs
+            )));
+        }
 
         let bad = |what: String| Error::io(format!("validate: `{}`: {}", f.name, what));
         let reg = |r: Reg, role: &str| -> Result<()> {
