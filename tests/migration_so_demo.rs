@@ -317,6 +317,132 @@ fn task_handle_with_interior_mutability() {
     assert_eq!(last_log(&logs), "冒烟-重试/1/冒烟-重试: 1 步 1 错");
 }
 
+// ---- 端口 4：rhai_demo 的两大硬点 —— Page 对象与插件 Map 传参 ----
+//
+// 背景（docs/migration/rhai_demo_inventory.md）：
+//   * browser.rs 的 Page（39 个方法，&mut Page 首参）→ Opaque + 普通函数
+//   * system.rs 的 run_plugin(Map) -> Map → 信封扁平化：argv 动态数组在
+//     全部真实调用点本质是"exe + 脚本 + 空白分隔参数串"，payload 本来就
+//     以 JSON 字符串形态流动（json_input / stdout），Map 只是信封。
+//
+// 另验证 rhai 的 `let p = ()` 哨兵模式（先空后 Page）在 miniscript 里
+// 用「作用域重构」替代——把用 p 的逻辑搬进获取 p 的分支。
+
+struct Page {
+    url: RefCell<String>,
+    closed: Cell<bool>,
+}
+
+const BROWSER_POC: &str = r#"
+func main() {
+    let p = browser_open("task.html")
+    let f = page_find(p, "同意")
+    if f.0 {
+        log("命中 " + f.2 + " hits=" + to_str(f.1))
+        page_close(p)
+        log("closed=" + to_str(page_is_closed(p)))
+    } else {
+        log("没找到")
+    }
+}
+"#;
+
+#[test]
+fn browser_page_maps_to_opaque() {
+    let logs: Logs = Rc::new(RefCell::new(Vec::new()));
+    let mut engine = Engine::new();
+    let sink = Rc::clone(&logs);
+    register_fn!(engine, "log", (String), move |s| sink.borrow_mut().push(s)).unwrap();
+
+    // rhai: register_type_with_name::<Page>("Page") → Opaque<Page>
+    register_fn!(engine, "browser_open", (String) -> Result<Opaque<Page>, Error>, |url| {
+        Ok(Opaque::new(Page { url: RefCell::new(url), closed: Cell::new(false) }))
+    })
+    .unwrap();
+    // rhai: p.find(text) → Map{found,hits,id}；真实消费字段是 .found/.hits/.id
+    // → (bool, i64, String) 三元组（mock：任务页里有"同意"按钮）
+    register_fn!(engine, "page_find", (Opaque<Page>, String) -> (bool, i64, String), |p, text| {
+        let url = p.url.borrow();
+        if url.contains("task") && text == "同意" {
+            (true, 4, "okbtn".into())
+        } else {
+            (false, 0, String::new())
+        }
+    })
+    .unwrap();
+    register_fn!(engine, "page_close", (Opaque<Page>), |p| p.closed.set(true)).unwrap();
+    register_fn!(engine, "page_is_closed", (Opaque<Page>) -> bool, |p| p.closed.get()).unwrap();
+
+    let script = engine.load_str(BROWSER_POC).unwrap();
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::Unit);
+    assert_eq!(
+        logs.borrow().as_slice(),
+        ["命中 okbtn hits=4", "closed=true"]
+    );
+
+    // 类型护栏：把别的句柄递给 page_find 会被边界拒绝
+    let wrong = engine
+        .load_str("func go(t) { page_find(t, \"x\") }")
+        .unwrap();
+    let err = engine.call(
+        &wrong,
+        "go",
+        vec![Value::from(Opaque::new(BindList::default()))],
+    );
+    assert!(err.is_err(), "BindList is not a Page");
+}
+
+// rhai: run_plugin(spec Map) → 信封扁平化 + JSON 字符串透传
+const PLUGIN_POC: &str = r#"
+func main() {
+    // 原 rhai：动态数组 argv + 条件 push → 字符串拼接（shell 风格）
+    let args = "-f jsonl --timing"
+    args = args + " -l zh"
+
+    // 原 rhai：json_str(#{image: "x.png", min_conf: 0.9}) → 字段少手动拼
+    let payload = "{\"image\":\"x.png\",\"min_conf\":0.9}"
+
+    let m = run_plugin("python", "plugins/nbocr.py", args, payload)
+    if m.0 == 0 {
+        log("code=0 stdout=" + m.1)
+    } else {
+        log("stderr=" + m.2)
+    }
+}
+"#;
+
+#[test]
+fn run_plugin_map_flattens_to_params_and_json_passthrough() {
+    let logs: Logs = Rc::new(RefCell::new(Vec::new()));
+    let mut engine = Engine::new();
+    let sink = Rc::clone(&logs);
+    register_fn!(engine, "log", (String), move |s| sink.borrow_mut().push(s)).unwrap();
+
+    register_fn!(engine, "run_plugin",
+        (String, String, String, String) -> Result<(i64, String, String), Error>,
+        |exe, script, args, json_input| {
+            // mock：插件崩溃通道走 Err（rhai 侧 try/catch 的对应物）
+            if args.contains("--boom") {
+                return Err(Error::runtime("plugin crashed"));
+            }
+            let _ = (exe, script);
+            Ok((0, format!("echoed {}", json_input), String::new()))
+        })
+    .unwrap();
+
+    let script = engine.load_str(PLUGIN_POC).unwrap();
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::Unit);
+    assert_eq!(
+        logs.borrow().as_slice(),
+        ["code=0 stdout=echoed {\"image\":\"x.png\",\"min_conf\":0.9}"]
+    );
+
+    // 插件崩溃 → Err → engine.call 失败（宿主组装 ERR\t 报告）
+    let crash = engine.load_str("func main() { run_plugin(\"p\", \"s\", \"--boom\", \"{}\") }").unwrap();
+    let err = engine.call(&crash, "main", vec![]).unwrap_err();
+    assert!(err.message.contains("plugin crashed"), "{}", err.message);
+}
+
 // ---- N 元组桥接层直测（2–8 元组作为宿主返回值与实参）----
 
 #[test]
