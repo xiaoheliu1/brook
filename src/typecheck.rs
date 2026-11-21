@@ -25,6 +25,11 @@ pub struct Checker {
     next_var: usize,
     /// Mutable table of all functions: host + script.
     sigs: SigTable,
+    /// Host-supplied names, so pass 1 can distinguish "collides with a host
+    /// function" from "the script defines the same name twice" (the latter is
+    /// the common failure when a host concatenates a shared library with a
+    /// business script — see docs/TUTORIAL.md §4.4).
+    host_names: std::collections::HashSet<String>,
     scopes: Vec<HashMap<String, Ty>>,
     current_ret: Ty,
     /// Number of enclosing `while`/`for` bodies. `break` and `continue` are
@@ -38,6 +43,7 @@ impl Checker {
             subst: Vec::new(),
             next_var: 0,
             sigs: host.clone(),
+            host_names: host.keys().cloned().collect(),
             scopes: Vec::new(),
             current_ret: Ty::Unit,
             loop_depth: 0,
@@ -47,9 +53,15 @@ impl Checker {
     pub fn check(mut self, program: &Program) -> Result<SigTable> {
         // Pass 1: build a signature skeleton for every script function.
         for f in &program.funcs {
-            if self.sigs.contains_key(&f.name) {
+            if self.host_names.contains(&f.name) {
                 return Err(Error::type_error(
                     format!("function `{}` is already defined by the host", f.name),
+                    f.span,
+                ));
+            }
+            if self.sigs.contains_key(&f.name) {
+                return Err(Error::type_error(
+                    format!("function `{}` is already defined (duplicate definition)", f.name),
                     f.span,
                 ));
             }

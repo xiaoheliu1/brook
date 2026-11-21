@@ -609,6 +609,45 @@ let handles: Vec<_> = (0..4).map(|tid| {
 
 调优手段：`with_limits` 收紧 gas 能提前掐死慢脚本；真正要原生性能的热点走 AOT/JIT（见 PROJECT_PLAN.md Q11/ADR-014，当前均冻结）。
 
+### 4.4 公共函数库：多脚本复用（宿主拼接）
+
+语言里**没有 `import` 语句**（刻意极简）。把常用的公共函数（日志前缀、重试逻辑、单位换算……）放进 `lib.ms`，其他脚本要用时，**宿主把两份源码拼成一份再编译**：
+
+```rust
+/// lib.ms（公共库）+ 业务脚本 → 一份编译单元
+fn load_with_lib(
+    engine: &Engine,
+    lib_path: &str,
+    script_path: &str,
+) -> miniscript::Result<miniscript::Script> {
+    let lib = std::fs::read_to_string(lib_path)?;
+    let user = std::fs::read_to_string(script_path)?;
+    engine.load_cached(&format!("{}\n{}", lib, user))
+}
+```
+
+```text
+// lib.ms —— 公共函数
+func log_prefix(tag: str, msg: str) { "[" + tag + "] " + msg }
+func double(n) { n * 2 }
+```
+
+```text
+// task.ms —— 业务脚本，直接用 lib 的函数
+func main() {
+    log_prefix("任务", "开始")
+    double(21)
+}
+```
+
+要点：
+- **顺序无关**：编译分两遍（先收集全部函数签名，再逐个查函数体），lib 放前面放后面都行
+- **同名冲突是编译错误**，不会静默覆盖——lib 函数建议统一前缀（`str_` / `flow_`）避免撞名
+- **`.sbc` 缓存照常工作**：缓存按拼接后完整文本的 hash 校验，lib 改一个字，所有依赖脚本自动失效重建
+- **热重载同理**：`reload` 拼接后的文本
+- **另一条路**：把公共函数下沉成宿主 `register_fn!`——更快、零冲突，但每改一次要动 Rust 代码
+- rhai 的 `import "common" as lib` 对应关系：从 rhai_demo 迁移时，把 `scripts/lib/common.rhai` 改成 `lib.ms`，宿主注册一个 `FileModuleResolver` 的等价物（就是上面这个拼接函数）；原生 `import` 语句是已记录的开放项（ADR-013），等真实需求再动引擎
+
 ---
 
 ## 5. 常见坑 FAQ（每一条都是真实踩过的）

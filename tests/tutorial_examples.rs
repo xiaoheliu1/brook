@@ -652,6 +652,41 @@ fn bytecode_cache() {
 }
 
 // ===========================================================================
+// §4.4 公共函数库：宿主拼接（语言没有 import，引擎把脚本当字符串）
+// ===========================================================================
+
+#[test]
+fn shared_library_via_host_concat() {
+    let engine = Engine::new();
+
+    // 公共库（相当于 rhai_demo 的 scripts/lib/common.rhai）
+    let lib = "func log_prefix(tag: str, msg: str) {\n    \"[\" + tag + \"] \" + msg\n}\nfunc double(n) { n * 2 }";
+    // 业务脚本：直接调用 lib 里的函数，不重复造轮子
+    let user = "func main() {\n    log_prefix(\"任务\", \"开始\")\n    double(21)\n}";
+
+    // 顺序无关：编译分两遍（先收全部签名，再查函数体），lib 在前在后都行
+    let combined = format!("{}\n{}", lib, user);
+    let script = engine.load_str(&combined).unwrap();
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+
+    let reversed = format!("{}\n{}", user, lib);
+    let script = engine.load_str(&reversed).unwrap();
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+
+    // 同名冲突：明确报错，不静默覆盖（措辞区分宿主碰撞与脚本内部重复）
+    let dup = format!("{}\n{}", lib, "func double(n) { n }");
+    let err = engine.load_str(&dup).unwrap_err();
+    assert!(err.message.contains("duplicate definition"), "{}", err.message);
+
+    let mut engine2 = Engine::new();
+    engine2
+        .register_fn("double", vec![], miniscript::ty::Ty::I64, |_| Ok(Value::I64(0)))
+        .unwrap();
+    let err = engine2.load_str("func double(n) { n }").unwrap_err();
+    assert!(err.message.contains("by the host"), "{}", err.message);
+}
+
+// ===========================================================================
 // §4.2 线程模型
 // ===========================================================================
 
