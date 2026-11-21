@@ -686,6 +686,36 @@ fn shared_library_via_host_concat() {
     assert!(err.message.contains("by the host"), "{}", err.message);
 }
 
+#[test]
+fn shared_library_multi_and_conventions() {
+    let engine = Engine::new();
+
+    // 文件名/位置任意——引擎只收字符串。两个库 + 业务脚本：
+    let str_lib = "func str_shout(s: str) { s + \"!\" }";       // 名字随便起
+    let num_lib = "func num_double(n) { n * 2 }";
+    let user = "func main() {\n    let a = str_shout(\"hi\")\n    let b = num_double(21)\n    a + to_str(b)\n}";
+    let combined = format!("{}\n{}\n{}", str_lib, num_lib, user);
+    let script = engine.load_str(&combined).unwrap();
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::from("hi!42")
+    );
+
+    // 同一份库拼两次 → duplicate definition 报错（兜住"循环包含"）
+    let twice = format!("{}\n{}\n{}\n{}", str_lib, user, str_lib, "");
+    let err = engine.load_str(&twice).unwrap_err();
+    assert!(err.message.contains("duplicate definition"), "{}", err.message);
+
+    // 报错行号是拼接后文本的行号：两行 lib 在前，业务在第 3 行
+    let bad_user = "func main() { 1 / 0 }";
+    let bad_combined = format!("{}\n{}\n{}", str_lib, num_lib, bad_user);
+    let script = engine.load_str(&bad_combined).unwrap();
+    let err = engine.call(&script, "main", vec![]).unwrap_err();
+    assert!(err.to_string().contains("3:"), "{}", err);
+    let report = script.report(&err);
+    assert!(report.contains("1 / 0"), "{}", report);
+}
+
 // ===========================================================================
 // §4.2 线程模型
 // ===========================================================================

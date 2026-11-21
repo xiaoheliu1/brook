@@ -611,42 +611,77 @@ let handles: Vec<_> = (0..4).map(|tid| {
 
 ### 4.4 公共函数库：多脚本复用（宿主拼接）
 
-语言里**没有 `import` 语句**（刻意极简）。把常用的公共函数（日志前缀、重试逻辑、单位换算……）放进 `lib.ms`，其他脚本要用时，**宿主把两份源码拼成一份再编译**：
+语言里**没有 `import` 语句**（刻意极简），引擎也**没有"库"的概念**——它只收字符串。所以「公共函数库」完全是你宿主侧的约定：**读几份源码、按什么顺序拼起来、喂给引擎**。这份自由意味着下面所有问题都没有引擎侧限制，全部由你的十几行宿主代码决定。
+
+**先回答三个必然要问的问题**：
+
+| 问题 | 答案 | 为什么 |
+|---|---|---|
+| 文件必须叫 `lib.ms` 吗？ | **不。** 名字/后缀任意（`common.txt`、`我的函数库` 都行） | 引擎不知道"文件"存在，只收字符串 |
+| 位置有限制吗？ | **不。** 任何目录、Android assets、数据库、网络下载都行 | 读文件发生在你的 Rust 代码里（`std::fs::read_to_string`），引擎不做路径解析 |
+| 能有几个库？ | **任意个**，库还能"引用"别的库 | 拼接就是字符串拼接；库套库 = 宿主递归拼接（循环包含自己防，拼重了会得到 duplicate definition 报错） |
+
+**谁负责什么**（理解这个设计的钥匙）：
+
+| 事项 | 谁负责 |
+|---|---|
+| 找文件、读内容、拼接顺序、循环包含检测 | **宿主**（你的 Rust 代码） |
+| 避免同名冲突（撞名是编译错误兜底） | 宿主约定（lib 函数加前缀）+ 引擎报错 |
+| 编译 / 缓存 hash / 执行 / 报错渲染 | **引擎**（对拼接后的完整文本） |
+
+**完整示例：两个库 + 一个业务脚本**
 
 ```rust
-/// lib.ms（公共库）+ 业务脚本 → 一份编译单元
-fn load_with_lib(
+/// 任意目录、任意文件名——这里约定 lib 放 scripts/lib/ 下
+fn load_with_libs(
     engine: &Engine,
-    lib_path: &str,
+    lib_paths: &[&str],       // 任意多个库
     script_path: &str,
 ) -> miniscript::Result<miniscript::Script> {
-    let lib = std::fs::read_to_string(lib_path)?;
-    let user = std::fs::read_to_string(script_path)?;
-    engine.load_cached(&format!("{}\n{}", lib, user))
+    let mut combined = String::new();
+    for p in lib_paths {
+        combined.push_str(&std::fs::read_to_string(p)?);
+        combined.push('\n');
+    }
+    combined.push_str(&std::fs::read_to_string(script_path)?);
+    engine.load_cached(&combined)
 }
+
+let script = load_with_libs(
+    &engine,
+    &["scripts/lib/str.ms", "scripts/lib/num.ms"],   // 名字与位置随便定
+    "scripts/task.ms",
+)?;
 ```
 
 ```text
-// lib.ms —— 公共函数
-func log_prefix(tag: str, msg: str) { "[" + tag + "] " + msg }
-func double(n) { n * 2 }
+// scripts/lib/str.ms —— 字符串工具
+func str_shout(s: str) { s + "!" }
 ```
 
 ```text
-// task.ms —— 业务脚本，直接用 lib 的函数
+// scripts/lib/num.ms —— 数值工具
+func num_double(n) { n * 2 }
+```
+
+```text
+// scripts/task.ms —— 业务脚本，三个库的函数都能直接用
 func main() {
-    log_prefix("任务", "开始")
-    double(21)
+    let a = str_shout("hi")
+    let b = num_double(21)
+    a + to_str(b)        // "hi!42"
 }
 ```
 
-要点：
-- **顺序无关**：编译分两遍（先收集全部函数签名，再逐个查函数体），lib 放前面放后面都行
-- **同名冲突是编译错误**，不会静默覆盖——lib 函数建议统一前缀（`str_` / `flow_`）避免撞名
-- **`.sbc` 缓存照常工作**：缓存按拼接后完整文本的 hash 校验，lib 改一个字，所有依赖脚本自动失效重建
-- **热重载同理**：`reload` 拼接后的文本
-- **另一条路**：把公共函数下沉成宿主 `register_fn!`——更快、零冲突，但每改一次要动 Rust 代码
-- rhai 的 `import "common" as lib` 对应关系：从 rhai_demo 迁移时，把 `scripts/lib/common.rhai` 改成 `lib.ms`，宿主注册一个 `FileModuleResolver` 的等价物（就是上面这个拼接函数）；原生 `import` 语句是已记录的开放项（ADR-013），等真实需求再动引擎
+**四条要点**：
+- **顺序无关**：编译分两遍（先收集全部函数签名，再逐个查函数体），库放前面放后面都行
+- **同名冲突是编译错误**（`already defined (duplicate definition)`），不会静默覆盖——把同一份库拼两次也会触发这条，正好兜住"循环包含"；lib 函数建议统一前缀（`str_` / `flow_`）
+- **`.sbc` 缓存照常工作**：缓存按拼接后完整文本的 hash 校验，lib 改一个字，所有依赖脚本自动失效重建；热重载同理（reload 拼接后的文本）
+- **报错行号是拼接后文本的行号**：lib 在前面会把业务脚本的行号往后推（lib 20 行，业务第 3 行报错显示 23 行）。`Script::report` 展示的也是拼接文本，caret 和源码行对得上、能看懂；想报"业务文件第几行"就把 lib 放最后，或自己做行号换算
+
+**另一条路**：把公共函数下沉成宿主 `register_fn!`——更快、零冲突，但每改一次要动 Rust 代码。
+
+**rhai 对照**：rhai 的 `import "common" as lib` + `FileModuleResolver` 把解析规则做进了引擎；miniscript 把这套规则完全交还宿主（上面 `load_with_libs` 就是 FileModuleResolver 的等价物，还更自由）。原生 `import` 语句是已记录的开放项（ADR-013），等真实需求再动引擎。
 
 ---
 
