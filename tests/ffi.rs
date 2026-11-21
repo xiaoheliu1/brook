@@ -403,6 +403,11 @@ fn ffi_script_contract_and_null_errors() {
     let (code, _, _) = unsafe { call_script(ptr, "go", &[bad_len]) };
     assert_eq!(code, MS_ERR_ENGINE);
 
+    // Non-empty STR payload with a null pointer: reported, not dereferenced.
+    let null_payload = MsVal { tag: MS_VAL_STR, i: 5, f: 0.0, s: std::ptr::null() };
+    let (code, _, _) = unsafe { call_script(ptr, "go", &[null_payload]) };
+    assert_eq!(code, MS_ERR_NULL, "{}", last_error_and_report().0);
+
     // Nulls are reported, never dereferenced.
     let func = CString::new("go").unwrap();
     let mut out = MsValOut { tag: 0, i: 0, f: 0.0, len: 0 };

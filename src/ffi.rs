@@ -370,6 +370,9 @@ unsafe fn msval_to_value(v: &MsVal) -> Result<Value, Failure> {
             if len == 0 {
                 return Ok(Value::from(""));
             }
+            if v.s.is_null() {
+                return Err(Failure::null("null string argument"));
+            }
             let bytes = std::slice::from_raw_parts(v.s.cast::<u8>(), len);
             let s = std::str::from_utf8(bytes).map_err(|e| Failure {
                 code: MS_ERR_UTF8,
