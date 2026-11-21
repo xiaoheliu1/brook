@@ -443,6 +443,90 @@ fn run_plugin_map_flattens_to_params_and_json_passthrough() {
     assert!(err.message.contains("plugin crashed"), "{}", err.message);
 }
 
+// ---- 端口 5：跨脚本调用 —— 宿主开放 call_script，脚本调另一个脚本的函数 ----
+//
+// so_demo 已有对应物 run_script(name)（整脚本执行）；这里是更精细的
+// 「调目标脚本中的指定函数」。引擎零改造：宿主用 Rc<RefCell<Engine>>
+// 共享同一引擎实例（嵌套调用期间全是不可变借用，RefCell 不冲突）。
+// 宿主闭包必须自管三件事：递归检测（每次嵌套是全新 gas，引擎拦不住
+// A→B→A 无限嵌套）、脚本缓存（免重复编译）、嵌套深度上限。
+
+#[test]
+fn cross_script_call_via_host_function() {
+    use std::collections::HashMap;
+
+    let engine = Rc::new(RefCell::new(Engine::new()));
+
+    // 脚本 B：独立编译单元，提供一个 compute 函数
+    let script_b = engine
+        .borrow()
+        .load_str("func compute(n) { n * 7 }")
+        .unwrap();
+    // 宿主的脚本缓存（对应 so_demo 的 AST_CACHE）
+    let cache: Rc<RefCell<HashMap<String, miniscript::Script>>> =
+        Rc::new(RefCell::new(HashMap::from([("b.ms".to_string(), script_b)])));
+    // 递归检测的名字栈（对应 so_demo 的 SCRIPT_STACK）
+    let stack: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // 在共享引擎上注册 call_script——闭包捕获引擎的 Rc
+    // （会形成 Rc 环导致引擎延迟释放；长生命周期宿主可接受，测试进程退出即回收）
+    let eng2 = Rc::clone(&engine);
+    let cache2 = Rc::clone(&cache);
+    let stack2 = Rc::clone(&stack);
+    register_fn!(
+        engine.borrow_mut(),
+        "call_script",
+        (String, String) -> Result<(bool, i64), Error>,
+        move |script_name, func| {
+            if stack2.borrow().iter().any(|s| s == &script_name) {
+                return Err(Error::runtime(format!("跨脚本递归: {}", script_name)));
+            }
+            stack2.borrow_mut().push(script_name.clone());
+            let inner = (|| {
+                let eng = eng2.borrow();
+                let script = cache2
+                    .borrow()
+                    .get(&script_name)
+                    .cloned()
+                    .ok_or_else(|| Error::runtime(format!("脚本不存在: {}", script_name)))?;
+                let v = eng.call(&script, &func, vec![Value::I64(6)])?;
+                match v {
+                    Value::I64(n) => Ok((true, n)),
+                    _ => Ok((true, 0)),
+                }
+            })();
+            stack2.borrow_mut().pop();
+            inner
+        }
+    )
+    .unwrap();
+
+    // 脚本 A 调用 B 的 compute —— 对脚本作者来说就是调一个宿主函数
+    let script_a = engine
+        .borrow()
+        .load_str("func main() {\n    let r = call_script(\"b.ms\", \"compute\")\n    if r.0 { r.1 } else { -1 }\n}")
+        .unwrap();
+    assert_eq!(
+        engine.borrow().call(&script_a, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
+
+    // 递归拦截：目标脚本又调 call_script(自己) → 名字栈检测 → 明确报错
+    let script_self = engine
+        .borrow()
+        .load_str("func self_call(n) { call_script(\"self.ms\", \"self_call\") }")
+        .unwrap();
+    cache
+        .borrow_mut()
+        .insert("self.ms".into(), script_self);
+    let caller = engine
+        .borrow()
+        .load_str("func main() { call_script(\"self.ms\", \"self_call\") }")
+        .unwrap();
+    let err = engine.borrow().call(&caller, "main", vec![]).unwrap_err();
+    assert!(err.message.contains("跨脚本递归"), "{}", err.message);
+}
+
 // ---- N 元组桥接层直测（2–8 元组作为宿主返回值与实参）----
 
 #[test]
