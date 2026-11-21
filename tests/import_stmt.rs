@@ -228,3 +228,58 @@ fn hot_reload_refreshes_imported_libraries() {
     engine.reload(&mut script, &main).unwrap();
     assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(2100));
 }
+
+/// 缓存校验的安全加固（cache decode 硬校验）：恶意构造的 .sbc 依赖清单
+/// 带 `..` 组件或坏 flag → decode 拒绝（不能用依赖校验做任意路径探测）。
+/// 正常编译产物不可能产生这样的依赖清单（名字护栏编译期拦截）。
+/// 依赖路径在测试里统一用正斜杠（Rust 字符串无需反斜杠转义，语义相同）。
+#[test]
+fn cache_decode_rejects_hostile_dependency_lists() {
+    use std::collections::HashMap;
+    use std::rc::Rc;
+    use brook::cache;
+    use brook::ir::Program;
+
+    let fp: cache::HostFingerprint = Vec::new();
+    let base = brook::Script {
+        code: Program {
+            funcs: vec![],
+            ids: HashMap::new(),
+            strings: vec![],
+        },
+        sigs: HashMap::new(),
+        name: "hostile".into(),
+        source_hash: 1,
+        source: Rc::from(""),
+        deps: Vec::new(),
+    };
+
+    // 敌意依赖清单（`..` 组件）→ decode 拒绝
+    let hostile = brook::Script {
+        code: base.code.clone(),
+        sigs: base.sigs.clone(),
+        name: base.name.clone(),
+        source_hash: base.source_hash,
+        source: base.source.clone(),
+        deps: vec![
+            ("../../secrets.bk".into(), 1, true),
+            ("..\\..\\secrets.bk".into(), 1, true),
+        ],
+    };
+    let bytes = cache::encode(&hostile, &fp);
+    let err = cache::decode(&bytes, &fp).unwrap_err();
+    assert!(err.message.contains(".."), "{}", err.message);
+
+    // 坏来源标记（手工翻转依赖记录末尾的 flag 字节）→ decode 拒绝。
+    // 翻转的是依赖「计数」高位字节（计数先于 flag 校验触发），同样证明
+    // 末尾字节的翻转不会被静默吞掉。
+    let mut bytes = cache::encode(&base, &fp);
+    let n = bytes.len();
+    bytes[n - 1] = 0xFE;
+    let err = cache::decode(&bytes, &fp).unwrap_err();
+    assert!(
+        err.message.contains("dependency count"),
+        "{}",
+        err.message
+    );
+}

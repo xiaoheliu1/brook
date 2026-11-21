@@ -475,12 +475,15 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
         w.u16(*id);
     }
 
-    // 依赖清单（约定式 import，ADR-017）：路径 + 内容 hash。
-    // load_cached / compile_cached 加载时逐一校验，任一依赖变更即失效重建。
+    // 依赖清单（约定式 import，ADR-017）：路径（或 resolver 名字）+ 内容
+    // hash + 来源标记（1 = 文件，可按路径校验时效；0 = resolver，失效由
+    // 宿主自行决定）。load_cached / compile_cached 加载时逐一校验文件依赖，
+    // 任一依赖变更即失效重建。
     w.u32(script.deps.len() as u32);
-    for (path, hash) in &script.deps {
+    for (path, hash, is_file) in &script.deps {
         w.str(path);
         w.u64(*hash);
+        w.u8(u8::from(*is_file));
     }
     w.0
 }
@@ -546,14 +549,21 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
         ids.insert(n, r.u16()?);
     }
 
-    // 依赖清单（v4，约定式 import）：路径 + 内容 hash。
+    // 依赖清单（v4，约定式 import）：路径（或 resolver 名字）+ 内容 hash +
+    // 来源标记。硬校验：依赖路径禁 '..' 组件——恶意构造的 .sbc 不能借
+    // 依赖校验（deps_fresh 按路径读文件）做任意路径探测。
     let n_deps = r.u32()? as usize;
     if n_deps > bytes.len() { return Err(Error::io("cache: implausible dependency count")); }
     let mut deps = Vec::with_capacity(n_deps);
     for _ in 0..n_deps {
         let path = r.str()?;
         let hash = r.u64()?;
-        deps.push((path, hash));
+        let is_file = r.u8()?;
+        if is_file > 1 { return Err(Error::io("cache: invalid dependency flag")); }
+        if path.split(['/', '\\']).any(|c| c == "..") {
+            return Err(Error::io("cache: dependency path contains '..'"));
+        }
+        deps.push((path, hash, is_file == 1));
     }
 
     if r.pos != bytes.len() {

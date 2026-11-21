@@ -125,10 +125,11 @@ pub struct Script {
     /// Source text, kept for [`Script::report`]. Empty for a script decoded
     /// straight from `.sbc` bytes, where no source was supplied.
     pub source: Rc<str>,
-    /// 约定式 import 的依赖清单：(解析后路径, 源码 hash)。
+    /// 约定式 import 的依赖清单：(解析后路径, 源码 hash, 是否文件来源)。
     /// `load_cached` / `compile_cached` 用它做时效校验——任一依赖文件变更，
-    /// 缓存自动失效重建。`load_str` 场景没有依赖，为空。
-    pub deps: Vec<(String, u64)>,
+    /// 缓存自动失效重建。resolver 来源的依赖由宿主自行决定失效时机。
+    /// `load_str` 场景没有依赖，为空。
+    pub deps: Vec<(String, u64, bool)>,
 }
 
 impl Script {
@@ -533,12 +534,15 @@ const MAX_IMPORT_DEPTH: usize = 8; // import 链最深 8 层
 const MAX_IMPORT_BYTES: u64 = 1 << 20; // 单份 1 MiB（与字符串上限同口径）
 
 struct ImportUnit {
-    /// 显示路径（报错与依赖清单用）
+    /// 显示路径（报错与依赖清单用；resolver 来源为名字而非路径）
     path: String,
     src: String,
     /// 按 first_line 偏移解析出的 AST（拼接视图行号）
     program: ast::Program,
     is_main: bool,
+    /// true = 文件来源（缓存可按路径校验时效）；false = resolver 来源
+    /// （失效由宿主 resolver 自行决定，缓存校验跳过）
+    is_file: bool,
 }
 
 struct ImportLoader<'a> {
@@ -573,8 +577,15 @@ impl<'a> ImportLoader<'a> {
         mut self,
         src: &str,
         name: &str,
-    ) -> Result<(ast::Program, String, Vec<(String, u64)>)> {
-        self.load_unit(name.to_string(), src.to_string(), true, 0, self.base_dir.clone())?;
+    ) -> Result<(ast::Program, String, Vec<(String, u64, bool)>)> {
+        self.load_unit(
+            name.to_string(),
+            src.to_string(),
+            true,
+            self.base_dir.is_some(),
+            0,
+            self.base_dir.clone(),
+        )?;
         let mut funcs = Vec::new();
         for unit in &self.units {
             funcs.extend(unit.program.funcs.iter().cloned());
@@ -583,7 +594,7 @@ impl<'a> ImportLoader<'a> {
             .units
             .iter()
             .filter(|u| !u.is_main)
-            .map(|u| (u.path.clone(), cache::hash_source(&u.src)))
+            .map(|u| (u.path.clone(), cache::hash_source(&u.src), u.is_file))
             .collect();
         Ok((
             ast::Program {
@@ -600,18 +611,13 @@ impl<'a> ImportLoader<'a> {
         path: String,
         src: String,
         is_main: bool,
+        is_file: bool,
         depth: usize,
         base_dir: Option<PathBuf>,
     ) -> Result<()> {
         if depth > MAX_IMPORT_DEPTH {
             return Err(Error::type_error(
                 format!("import 链超过 {} 层", MAX_IMPORT_DEPTH),
-                Span::synthetic(),
-            ));
-        }
-        if self.units.len() >= MAX_IMPORT_UNITS {
-            return Err(Error::type_error(
-                format!("import 数量超过上限 ({})", MAX_IMPORT_UNITS - 1),
                 Span::synthetic(),
             ));
         }
@@ -646,9 +652,9 @@ impl<'a> ImportLoader<'a> {
         // 递归：依赖先 placement（依赖在前、主脚本最后）
         for imp in &program0.imports {
             Self::validate_import_name(&imp.name, imp.span)?;
-            let (dep_path, dep_src, dep_base) =
+            let (dep_path, dep_src, dep_base, dep_is_file) =
                 self.resolve(base_dir.as_deref(), &imp.name, imp.span)?;
-            self.load_unit(dep_path, dep_src, false, depth + 1, dep_base)?;
+            self.load_unit(dep_path, dep_src, false, dep_is_file, depth + 1, dep_base)?;
         }
 
         // 依赖已占用拼接视图行位 → 本单元起始行 = 当前行数
@@ -662,17 +668,27 @@ impl<'a> ImportLoader<'a> {
                 )
             })?;
 
-        // 拼接视图累加（文本与行号计数严格同步）
+        // 拼接视图累加（行号计数增量维护——整段重扫是 O(拼接文本)×单元数
+        // 的二次方行为，增量只扫当前单元）
+        // 数量上限在 placement 点检查：此时全部递归依赖已载入完毕，
+        // 总单元数确定（入口处检查会漏掉"主脚本自己"这一份）
+        if self.units.len() >= MAX_IMPORT_UNITS {
+            return Err(Error::type_error(
+                format!("import 数量超过上限 ({})", MAX_IMPORT_UNITS),
+                Span::synthetic(),
+            ));
+        }
         self.combined.push_str(&src);
         if !self.combined.ends_with('\n') {
             self.combined.push('\n');
         }
-        self.line_count = 1 + self.combined.matches('\n').count();
+        self.line_count += src.matches('\n').count() + usize::from(!src.ends_with('\n'));
         self.units.push(ImportUnit {
             path,
             src,
             program,
             is_main,
+            is_file,
         });
         // 本单元完成：弹出 DFS 路径、标记已完成
         self.stack.pop();
@@ -685,7 +701,7 @@ impl<'a> ImportLoader<'a> {
         base_dir: Option<&Path>,
         name: &str,
         span: Span,
-    ) -> Result<(String, String, Option<PathBuf>)> {
+    ) -> Result<(String, String, Option<PathBuf>, bool)> {
         Self::validate_import_name(name, span)?;
 
         // 自定义解析器优先（assets / DB / 加密等特殊部署）
@@ -696,7 +712,7 @@ impl<'a> ImportLoader<'a> {
                     span,
                 )
             })?;
-            return Ok((name.to_string(), src, None));
+            return Ok((name.to_string(), src, None, false));
         }
 
         // 目录便捷式：import_dir 优先，其次脚本自身目录
@@ -729,18 +745,43 @@ impl<'a> ImportLoader<'a> {
         let src = std::fs::read_to_string(&path).map_err(|e| {
             Error::io(format!("读取 import 文件失败 {}: {}", path.display(), e))
         })?;
+
+        // 逃逸防护：解析后的真实路径必须落在查找目录之内——防符号链接 /
+        // junction 把 import 引到脚本目录树外（与 so_demo fs 护栏同一哲学）
+        let canon_dir = std::fs::canonicalize(&dir).map_err(|e| {
+            Error::io(format!("import 目录不可访问 {}: {}", dir.display(), e))
+        })?;
+        let canon_path = std::fs::canonicalize(&path).map_err(|e| {
+            Error::io(format!("import \"{}\": {}", path.display(), e))
+        })?;
+        if !canon_path.starts_with(&canon_dir) {
+            return Err(Error::type_error(
+                format!(
+                    "import \"{}\" 逃出脚本目录树 (解析到 {})",
+                    name,
+                    canon_path.display()
+                ),
+                span,
+            ));
+        }
         Ok((
             path.display().to_string(),
             src,
             path.parent().map(|p| p.to_path_buf()),
+            true,
         ))
     }
 
-    /// import 名字的硬性规则：相对路径、'/' 分隔、禁 '.'/'..'、禁盘符。
-    /// 这是引擎义务（内置查找的安全护栏），宿主 resolver 可自行加码。
+    /// import 名字的硬性规则：相对路径、'/' 分隔、禁 '.'/'..'、禁盘符、
+    /// 禁控制字符、禁 Windows 保留设备名、禁组件尾点/尾空格（Win32 会
+    /// 剥除尾部点/空格产生别名路径）。这是引擎义务（内置查找的安全护栏），
+    /// 宿主 resolver 可自行加码。
     fn validate_import_name(name: &str, span: Span) -> Result<()> {
         if name.is_empty() || name.len() > 255 {
             return Err(Error::type_error("import 路径长度非法", span));
+        }
+        if name.chars().any(|c| c.is_control()) {
+            return Err(Error::type_error("import 路径包含控制字符", span));
         }
         if name.starts_with('/') || name.contains('\\') || name.contains(':') {
             return Err(Error::type_error(
@@ -755,14 +796,38 @@ impl<'a> ImportLoader<'a> {
                     span,
                 ));
             }
+            if comp.ends_with('.') || comp.ends_with(' ') {
+                return Err(Error::type_error(
+                    format!("import 路径组件不能以点或空格结尾: \"{name}\""),
+                    span,
+                ));
+            }
+            // Windows 保留设备名（任意扩展名都命中设备，如 NUL.vt）
+            let stem = comp.split('.').next().unwrap_or(comp);
+            if matches!(
+                stem.to_ascii_uppercase().as_str(),
+                "CON" | "PRN" | "AUX" | "NUL" | "COM0" | "COM1" | "COM2" | "COM3" | "COM4"
+                | "COM5" | "COM6" | "COM7" | "COM8" | "COM9" | "LPT0" | "LPT1" | "LPT2"
+                | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+            ) {
+                return Err(Error::type_error(
+                    format!("import 路径包含 Windows 保留设备名: \"{name}\""),
+                    span,
+                ));
+            }
         }
         Ok(())
     }
 
-    /// 依赖时效校验：逐个读依赖文件、重算 hash 对比。任何一个读不到或
-    /// 内容变了 → 缓存失效（重建会重新走 import 解析，错误如实报出）。
-    fn deps_fresh(deps: &[(String, u64)]) -> bool {
-        deps.iter().all(|(path, hash)| {
+    /// 依赖时效校验：文件来源依赖逐个读文件、重算 hash 对比（任何一个
+    /// 读不到或内容变了 → 缓存失效，重建会重新走 import 解析并如实报错）。
+    /// resolver 来源依赖无路径可校验——失效判定由宿主 resolver 自行决定，
+    /// 校验跳过（诚实限制：resolver 内容变更不会触发缓存重建）。
+    fn deps_fresh(deps: &[(String, u64, bool)]) -> bool {
+        deps.iter().all(|(path, hash, is_file)| {
+            if !*is_file {
+                return true;
+            }
             std::fs::read_to_string(path)
                 .map(|text| cache::hash_source(&text) == *hash)
                 .unwrap_or(false)

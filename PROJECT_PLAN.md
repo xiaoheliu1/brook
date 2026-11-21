@@ -526,6 +526,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **代价**：parser +30 行 / loader +120 行 / cache +40 行；`.sbc` VERSION 3→4（追加依赖清单段）；教程 §4.8 新章节
 - **证据**：`tests/import_stmt.rs` 11 项（同目录/子路径/相对导入者解析/顺序无关/重复幂等/循环报错/撞名报错/路径护栏/load_str 报错/resolver 逃生舱/缓存失效/热重载）+ 全量回归
 - **影响**：parser.rs / lexer.rs / token.rs / ast.rs / engine.rs / cache.rs（VERSION 4）/ 文档；C ABI 无变化；**与 D-041 的关系**：能力落地后 §4.8 才成为合法章节——D-041 的「不写不存在的能力」规则持续有效
+- **修订（2026-11-21，D-044 加固）**：① deps 清单追加 is_file 标记（resolver 依赖无路径可校验——原 deps_fresh 按路径读盘必然失败导致缓存永不命中，真 bug）；② 逃逸防护（canonicalize 包含性检查防 symlink/junction 出树）；③ Windows 保留设备名 / 控制字符 / 组件尾点尾空格拒绝；④ cache decode 拒绝 `..` 组件依赖与坏 flag（防恶意 .sbc 借校验探测路径）
 
 ---
 
@@ -557,6 +558,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 > 倒序追加。格式：`日期 · 变更内容 · 影响范围`
 
+- **2026-11-21** · **性能/稳定/安全三线加固（D-044）**：① 性能——Criterion 基线（before-import-perf）+ loader 行号计数 O(n²)→O(n) 增量维护 + 基准位 11（import 编译）；基线对比三连测确认无回退（首轮 rust 基线自漂 +4.5% 证实机器噪声 ±5%，compile (memory) 专项 5 秒窗复测 p=0.98 无变化）。② 稳定——`tests/import_fuzz.rs` 4 项：随机 import 图 300 轮永不 panic、深度/数量上限实测触发、逃逸尝试全拒绝、Windows 设备名拒绝（测试自身踩中 `.vt`/`.bk` 扩展名陷阱——改名后的肌肉记忆错误）。③ 安全——**deps_fresh 正确性修复**：resolver 来源依赖无路径可读，原实现按路径读盘必然失败→缓存永不命中（is_file 标记区分，resolver 依赖失效由宿主 resolver 自行决定）；import 逃逸加固（canonicalize 包含性检查防 symlink/junction 出树 + Windows 保留设备名 CON/NUL/... + 控制字符 + 组件尾点/尾空格拒绝）；cache decode 拒绝 `..` 组件与坏 flag 依赖（防恶意 .sbc 借依赖校验做路径探测）。测试 217→**222 项全绿、零警告** · engine.rs / cache.rs / tests/import_fuzz.rs / tests/import_stmt.rs
 - **2026-11-21** · **项目更名：`vitul` → `brook`（D-043）**：用户昵称「小河」的英译——crates.io `brook` 已被占用（BrookGPU 学术撞名），**用户明确接受放弃发布资格**（本地项目）；扩展名 `.vt` → `.bk`。历史条目中的旧名随全文替换统一，唯 Q4 / D-040 / 代号行三处回改为历史表述保真。测试 206→217 项（import 11 项），全绿零警告 · 全部文件
 - **2026-11-21** · **约定式 import 落地（ADR-017 / D-042）**：语言新增 `import "名字"` 语句（仅文件头）——引擎从脚本所在目录（或 set_import_dir/set_import_resolver 配置）载入库源码，文本拼接合并编译；重复 import 幂等去重、循环 import 编译报错、撞名报错、`..`/绝对路径编译期禁止（护栏引擎强制）；`.sbc` v4 追加依赖清单（路径+hash），加载时逐一校验，任一依赖改一字依赖脚本缓存自动失效；load_str 写 import 明确报错（D-041 规则）。parser +30 / loader +120 / cache +40 / 测试 11 项，**217 项全绿、零警告**；教程 §4.7→§4.8 重写为真实能力、HOST_GUIDE §12 重写（拼接降为备选）· 第三章 3.8、第七章 ADR-017、第七章 ADR-013 修订注、第九章、parser.rs / lexer.rs / token.rs / ast.rs / engine.rs / cache.rs / tests/import_stmt.rs
 - **2026-11-21** · **教程规则收紧：不写不存在的能力（D-041）**：用户按教程 §4.7「公共函数库（如果你的宿主提供了）」实测失败——该能力当前不存在，假设句式（"如果你的宿主提供了"）误导用户浪费半天。修正：§4.7 删除；§4.6 收尾直说「可调用函数 = 13 内置 + 宿主注册，无公共库、无跨脚本调用；复用逻辑 = 复制粘贴或请宿主做成宿主函数」；§11 import 行同步「当前不支持」；HOST_GUIDE §12/12.1 加定位警示（两模式均为宿主侧自行实现，非语言能力，别写进脚本教程）。**教训**：教程只写当前存在的能力；"如果宿主提供了"这类假设句式一律禁止——读者没有义务分辨哪些是假设哪些是现实。测试 26 项教程测试全过 · docs/TUTORIAL.md、docs/HOST_GUIDE.md

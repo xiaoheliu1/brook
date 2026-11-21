@@ -97,6 +97,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("10_brook decode sbc (memory)", |b| {
         b.iter(|| engine.script_from_bytes(black_box(&sbc_bytes)).unwrap())
     });
+
+    // 约定式 import 编译：loader 的目录解析 + 依赖读盘 + 文本合并开销
+    let imp_dir = dir.join("libs");
+    std::fs::create_dir_all(&imp_dir).unwrap();
+    std::fs::write(imp_dir.join("common.bk"), "func triple(n) { n * 3 }").unwrap();
+    let imp_engine = Engine::new().set_import_dir(&imp_dir);
+    let imp_src = "import \"common\"\n\nfunc main() { triple(5) }";
+    c.bench_function("11_brook compile import (loader)", |b| {
+        b.iter(|| imp_engine.load_str(black_box(imp_src)).unwrap())
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);
