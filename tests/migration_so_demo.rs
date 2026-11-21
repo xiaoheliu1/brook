@@ -525,6 +525,24 @@ fn cross_script_call_via_host_function() {
         .unwrap();
     let err = engine.borrow().call(&caller, "main", vec![]).unwrap_err();
     assert!(err.message.contains("跨脚本递归"), "{}", err.message);
+
+    // ⚠️ 陷阱实证：call_script 的返回形状固定为 (bool, i64)——目标函数
+    // 返回字符串时被静默吞成 (true, 0)。要做对就得为每种签名注册
+    // 变体（call_script_s / call_script_is / … 组合爆炸）。这就是为什么
+    // call_script 适合任务编排（粗粒度、字符串进出），而函数库（细粒度、
+    // 强类型、任意签名）应该用宿主拼接——拼接下签名编译期检查、类型自由。
+    let script_str = engine.borrow().load_str("func name() { \"文本\" }").unwrap();
+    cache.borrow_mut().insert("str.ms".into(), script_str);
+    let caller = engine
+        .borrow()
+        .load_str("func main() { call_script(\"str.ms\", \"name\") }")
+        .unwrap();
+    let r = engine.borrow().call(&caller, "main", vec![]).unwrap();
+    assert_eq!(
+        r,
+        Value::Tuple(vec![Value::Bool(true), Value::I64(0)]),
+        "字符串返回被 (bool, i64) 封送静默吞成 0——无报错、无提示"
+    );
 }
 
 // ---- N 元组桥接层直测（2–8 元组作为宿主返回值与实参）----
