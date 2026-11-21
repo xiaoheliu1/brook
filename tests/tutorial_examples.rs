@@ -1,10 +1,12 @@
-//! 《miniscript 入门教程》（docs/TUTORIAL.md）的可执行示例集。
+//! 文档示例的可执行集：
+//! * `docs/TUTORIAL.md`（脚本教程）——脚本行为由这里与各主题测试钉死
+//! * `docs/HOST_GUIDE.md`（宿主集成指南）——宿主代码示例对应本文件的 #[test]
+//! * `docs/patrol.ms`——教程 §9 的完整示例脚本，本文件原样读取并执行
 //!
-//! 教程里的每一段宿主代码都对应这里的一个 `#[test]`；教程声称的每个返回值
-//! 都被断言钉死。跑法：`cargo test --test tutorial_examples`。
+//! 跑法：`cargo test --test tutorial_examples`
 
 use miniscript::{register_fn, Engine, Error, Opaque, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 type Logs = Rc<RefCell<Vec<String>>>;
@@ -826,6 +828,51 @@ fn integer_boundaries() {
     let script = engine.load_str("func f() { 9223372036854775807 * 2 }").unwrap();
     let err = engine.call(&script, "f", vec![]).unwrap_err();
     assert!(err.message.contains("i64 mul overflow"), "{}", err.message);
+}
+
+// ===========================================================================
+// §9 完整示例：巡检任务（docs/patrol.ms 原样执行）
+// ===========================================================================
+
+#[test]
+fn patrol_complete_example() {
+    let logs: Logs = Rc::new(RefCell::new(Vec::new()));
+    let mut engine = Engine::new();
+    let sink = Rc::clone(&logs);
+    register_fn!(engine, "log", (String), move |s| sink.borrow_mut().push(s)).unwrap();
+    register_fn!(engine, "battery_level", (), || 22).unwrap();
+    register_fn!(engine, "find_text", (String) -> (bool, i64, i64), |t| {
+        if t == "省电模式" {
+            (true, 500, 800)
+        } else {
+            (false, 0, 0)
+        }
+    })
+    .unwrap();
+    let taps = Rc::new(Cell::new(0i64));
+    let taps2 = Rc::clone(&taps);
+    register_fn!(engine, "tap", (i64, i64) -> bool, move |x, y| {
+        let _ = (x, y);
+        taps2.set(taps2.get() + 1);
+        true
+    })
+    .unwrap();
+
+    // 教程 §9 的脚本文件原样读取执行——文档与代码永不分叉
+    let src = include_str!("../docs/patrol.ms");
+    let script = engine.load_str(src).unwrap();
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::Unit);
+
+    assert_eq!(
+        logs.borrow().as_slice(),
+        [
+            "当前电量 22%（告急）",
+            "进入省电流程",
+            "已点击省电模式",
+            "共按下 3 次减键",
+        ]
+    );
+    assert_eq!(taps.get(), 1);
 }
 
 // ===========================================================================
