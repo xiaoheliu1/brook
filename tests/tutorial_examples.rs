@@ -467,6 +467,89 @@ fn host_tuple_returns() {
     );
 }
 
+#[test]
+fn tuple_inference_and_host_boundary() {
+    let mut engine = Engine::new();
+
+    // —— §7 宿主返回元组：编译期就知道确切形状 ——
+    register_fn!(engine, "find_btn", (String) -> (bool, i64, i64, i64), |name| {
+        if name == "确定" {
+            (true, 100, 200, 50)
+        } else {
+            (false, 0, 0, 0)
+        }
+    })
+    .unwrap();
+
+    let script = engine
+        .load_str(
+            "func tap_ok() {\n    let hit = find_btn(\"确定\")\n    if hit.0 {\n        hit.1 + hit.2\n    } else {\n        0\n    }\n}",
+        )
+        .unwrap();
+    assert_eq!(engine.call(&script, "tap_ok", vec![]).unwrap(), Value::I64(300));
+
+    // 宿主返回的元组形状编译期已知 → 越界索引是编译错误
+    let err = engine
+        .load_str("func bad() {\n    let hit = find_btn(\"确定\")\n    hit.4\n}")
+        .unwrap_err();
+    assert!(err.message.contains("tuple index 4 out of range"), "{}", err.message);
+
+    // —— §6 脚本参数元组：形状由使用方式反推「至少 N 元」——
+    let script = engine
+        .load_str("func first5(t) { t.0 + t.1 + t.2 + t.3 + t.4 }")
+        .unwrap();
+
+    // 5 元：正好满足推断要求
+    assert_eq!(
+        engine
+            .call(
+                &script,
+                "first5",
+                vec![Value::Tuple(vec![
+                    Value::I64(1),
+                    Value::I64(2),
+                    Value::I64(3),
+                    Value::I64(4),
+                    Value::I64(5)
+                ])]
+            )
+            .unwrap(),
+        Value::I64(15)
+    );
+
+    // 6 元：更长也行——多出的元素无害
+    assert_eq!(
+        engine
+            .call(
+                &script,
+                "first5",
+                vec![Value::Tuple(vec![
+                    Value::I64(1),
+                    Value::I64(2),
+                    Value::I64(3),
+                    Value::I64(4),
+                    Value::I64(5),
+                    Value::I64(99)
+                ])]
+            )
+            .unwrap(),
+        Value::I64(15)
+    );
+
+    // 4 元：不够（脚本用了 .4）→ 运行时明确报错，不静默算错
+    let err = engine.call(
+        &script,
+        "first5",
+        vec![Value::Tuple(vec![
+            Value::I64(1),
+            Value::I64(2),
+            Value::I64(3),
+            Value::I64(4),
+        ])],
+    );
+    assert!(err.is_err(), "4 elements cannot satisfy a .4 access");
+}
+
 // ===========================================================================
 // §3.7 热重载
 // ===========================================================================
