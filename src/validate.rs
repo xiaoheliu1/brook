@@ -200,6 +200,14 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
                     regs_ok(&args, "args")?;
                     reg(dst, "dst")?;
                 }
+                Op::ContainsTyped { hay, needle, dst, ty } => {
+                    reg(hay, "hay")?;
+                    reg(needle, "needle")?;
+                    reg(dst, "dst")?;
+                    if ty as usize >= program.types.len() {
+                        return Err(bad(format!("ins {i}: contains type id {} out of range", ty)));
+                    }
+                }
 
                 Op::MakeTuple { dst, elems } => {
                     reg(dst, "dst")?;

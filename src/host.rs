@@ -293,8 +293,9 @@ impl<T: HostResult> HostResult for Vec<T> {
 ///
 /// The `-> T` form checks the callback's return type at compile time; the short
 /// form infers it. Both derive the script-facing signature from Rust types, so
-/// it can never drift from the callback. Supports 0–6 arguments, scalars,
-/// `String`/`Rc<str>`, `()`, 2-tuples, `Opaque<T>`, and `Result<T, Error>`.
+/// it can never drift from the callback. Supports 0–8 arguments (matching the
+/// language's `MAX_OPERANDS`), scalars, `String`/`Rc<str>`, `()`, 2-tuples,
+/// `Opaque<T>`, and `Result<T, Error>`.
 #[macro_export]
 macro_rules! register_fn {
     ($eng:expr, $name:expr, () -> $r:ty, $f:expr $(,)?) => {
@@ -318,6 +319,12 @@ macro_rules! register_fn {
     ($eng:expr, $name:expr, ($a:ty, $b:ty, $c:ty, $d:ty, $e:ty, $g:ty) -> $r:ty, $f:expr $(,)?) => {
         ($eng).register_typed6::<$a, $b, $c, $d, $e, $g, $r, _>($name, $f)
     };
+    ($eng:expr, $name:expr, ($a:ty, $b:ty, $c:ty, $d:ty, $e:ty, $g:ty, $h:ty) -> $r:ty, $f:expr $(,)?) => {
+        ($eng).register_typed7::<$a, $b, $c, $d, $e, $g, $h, $r, _>($name, $f)
+    };
+    ($eng:expr, $name:expr, ($a:ty, $b:ty, $c:ty, $d:ty, $e:ty, $g:ty, $h:ty, $i:ty) -> $r:ty, $f:expr $(,)?) => {
+        ($eng).register_typed8::<$a, $b, $c, $d, $e, $g, $h, $i, $r, _>($name, $f)
+    };
     ($eng:expr, $name:expr, (), $f:expr $(,)?) => {
         ($eng).register_typed0::<_, _>($name, $f)
     };
@@ -338,5 +345,11 @@ macro_rules! register_fn {
     };
     ($eng:expr, $name:expr, ($a:ty, $b:ty, $c:ty, $d:ty, $e:ty, $g:ty), $f:expr $(,)?) => {
         ($eng).register_typed6::<$a, $b, $c, $d, $e, $g, _, _>($name, $f)
+    };
+    ($eng:expr, $name:expr, ($a:ty, $b:ty, $c:ty, $d:ty, $e:ty, $g:ty, $h:ty), $f:expr $(,)?) => {
+        ($eng).register_typed7::<$a, $b, $c, $d, $e, $g, $h, _, _>($name, $f)
+    };
+    ($eng:expr, $name:expr, ($a:ty, $b:ty, $c:ty, $d:ty, $e:ty, $g:ty, $h:ty, $i:ty), $f:expr $(,)?) => {
+        ($eng).register_typed8::<$a, $b, $c, $d, $e, $g, $h, $i, _, _>($name, $f)
     };
 }

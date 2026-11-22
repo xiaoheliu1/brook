@@ -229,6 +229,45 @@ fn hot_reload_refreshes_imported_libraries() {
     assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(2100));
 }
 
+#[test]
+fn cached_reload_invalidates_transitive_imports_and_missing_dependencies() {
+    let dir = TmpDir::new("cache_transitive");
+    let codec = dir.write("lib/codec.bk", "func enc(n) { n + 1 }");
+    let _net = dir.write(
+        "lib/net.bk",
+        "import \"codec\"\n\nfunc ping2() { enc(41) }",
+    );
+    let main = dir.write(
+        "task.bk",
+        "import \"net\"\n\nfunc main() { ping2() }",
+    );
+
+    let engine = Engine::new().set_import_dir(dir.path().join("lib"));
+    let mut script = engine.load_cached(&main).unwrap();
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+    assert!(main.with_extension("sbc").exists(), "cache should be written");
+
+    // The changed file is imported by net.bk, not by the main script. The
+    // dependency list must still include it, otherwise the stale .sbc would
+    // keep serving the old answer.
+    std::fs::write(&codec, "func enc(n) { n + 2 }").unwrap();
+    engine.reload_cached(&mut script, &main).unwrap();
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(43));
+
+    let fresh = engine.load_cached(&main).unwrap();
+    assert_eq!(engine.call(&fresh, "main", vec![]).unwrap(), Value::I64(43));
+
+    // A missing dependency must invalidate too; falling back to the cache here
+    // would hide a broken deployment.
+    std::fs::remove_file(&codec).unwrap();
+    let err = engine.reload_cached(&mut script, &main).unwrap_err();
+    assert!(
+        err.message.contains("找不到 import 文件") || err.message.contains("codec"),
+        "{}",
+        err.message
+    );
+}
+
 /// 缓存校验的安全加固（cache decode 硬校验）：恶意构造的 .sbc 依赖清单
 /// 带 `..` 组件或坏 flag → decode 拒绝（不能用依赖校验做任意路径探测）。
 /// 正常编译产物不可能产生这样的依赖清单（名字护栏编译期拦截）。
@@ -246,6 +285,7 @@ fn cache_decode_rejects_hostile_dependency_lists() {
             funcs: vec![],
             ids: HashMap::new(),
             strings: vec![],
+            types: Vec::new(),
         },
         sigs: HashMap::new(),
         name: "hostile".into(),
@@ -308,4 +348,50 @@ fn cache_decode_rejects_hostile_dependency_lists() {
         "{}",
         err.message
     );
+}
+
+// ---- 编译快路径（D-048）-----------------------------------------------
+// `compile_inner` 现在对不含 "import" 子串的源码跳过第一遍 lex+parse，
+// 并且只对【主文件脚本】做 canonicalize。下面两条锁定这两个前提的
+// 语义边界：子串误判不能变成真 import，虚拟名不需要是合法路径。
+
+#[test]
+fn keyword_in_literal_or_comment_does_not_trigger_import_resolution() {
+    // 没有配置 import_dir / resolver：如果文本扫描的过近似被误当成真
+    // import，这里会在解析期报 "import 需要宿主配置"。
+    let engine = Engine::new();
+    for src in [
+        "func main() { \"import\" }",
+        "// import \"ghost\"\nfunc main() { 7 }",
+        "func important() { 3 }\nfunc main() { important() }",
+    ] {
+        let script = engine.load_str(src).unwrap();
+        assert!(script.deps.is_empty(), "no dependency should be loaded: {src}");
+    }
+    assert_eq!(
+        engine
+            .call(&engine.load_str("func main() { \"import\" }").unwrap(), "main", vec![])
+            .unwrap(),
+        Value::Str(std::rc::Rc::from("import"))
+    );
+}
+
+#[test]
+fn virtual_names_work_without_touching_the_filesystem() {
+    let engine = Engine::new().set_import_resolver(|name| {
+        Ok(format!("func from_lib() {{ {} }}", if name.contains('/') { 9 } else { 5 }))
+    });
+    // '/' 名字在 Windows 上是非法的单文件名；作为虚拟 key 必须照常工作
+    // （旧实现会先 canonicalize，失败后回退；这里验证不依赖那条回退）。
+    let script = engine
+        .compile("import \"pkg/lib\"\nfunc main() { from_lib() }", "<virtual:main>")
+        .unwrap();
+    assert_eq!(script.deps.len(), 1);
+    assert!(!script.deps[0].2, "resolver deps are not file-backed");
+    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(9));
+
+    // 无 import 的虚拟名同样正常，且依赖清单为空
+    let plain = engine.compile("func main() { 1 }", "<virtual:plain>").unwrap();
+    assert!(plain.deps.is_empty());
+    assert_eq!(engine.call(&plain, "main", vec![]).unwrap(), Value::I64(1));
 }

@@ -34,7 +34,13 @@ pub const MAGIC: &[u8; 4] = b"VTBC";
 /// ADR-018：签名类型新增 `Ty::Arr`（write_ty tag 9），VERSION 4→5 强制重建。
 /// D-046 5.2：末尾追加拼接视图源码段（带依赖的脚本缓存命中后 report
 /// 才有源码行/caret），VERSION 5→6 强制重建。
-pub const VERSION: u16 = 6;
+/// D-047：新增 `ContainsTyped`（opcode 76）与末尾的类型池段；旧的
+/// `CallBuiltin(CONTAINS)` 无静态元素类型，会把标量当堆索引比较（可打崩
+/// 进程），必须让所有 v6 缓存失效重建，VERSION 6→7。
+/// D-049：`ContainsTyped` 的 f64 标量改为 IEEE 值相等（NaN != NaN、
+/// -0.0 == 0.0），与解释器 `Value::PartialEq` 及 `==` 一致；v7 缓存会
+/// 保留旧的按位比较语义，必须失效重建，VERSION 7→8。
+pub const VERSION: u16 = 8;
 
 /// (name, slot id, params, ret), sorted by name. `CallHost` instructions embed
 /// the slot id, so both the set of functions and their order must be stable.
@@ -390,6 +396,14 @@ op_table! {
         Op::ArrLen { dst: w.r[0], src: w.r[1] };
     75, ArrGet, { dst, base, idx }, [dst, base, idx], 0, 0, Vec::new(),
         Op::ArrGet { dst: w.r[0], base: w.r[1], idx: w.r[2] };
+    // v7: typed structural contains (D-047). `imm` indexes `Program::types`.
+    76, ContainsTyped, { hay, needle, dst, ty }, [dst, hay, needle], ty as u64, 0, Vec::new(),
+        Op::ContainsTyped {
+            hay: w.r[1],
+            needle: w.r[2],
+            dst: w.r[0],
+            ty: u32::try_from(w.imm).map_err(|_| Error::io("cache: type id overflow"))?,
+        };
 }
 
 fn write_instr(w: &mut Writer, ins: &Instr) {
@@ -406,7 +420,7 @@ fn write_instr(w: &mut Writer, ins: &Instr) {
 
 /// Cheap structural sanity check on decoded code. Keeps a damaged cache from
 /// producing out-of-bounds indexing inside the VM.
-fn validate_wire(w: &Wire, nregs: u16, code_len: usize, nfuncs: usize, nstrings: usize, nhost: usize) -> Result<()> {
+fn validate_wire(w: &Wire, nregs: u16, code_len: usize, nfuncs: usize, nstrings: usize, nhost: usize, ntypes: usize) -> Result<()> {
     let bad = |what: &str| Error::io(format!("cache: {what} out of range"));
     // For call opcodes `r[1]` holds a function id, not a register.
     let skip = matches!(w.tag, 60..=62);
@@ -441,12 +455,16 @@ fn validate_wire(w: &Wire, nregs: u16, code_len: usize, nfuncs: usize, nstrings:
             let id = u8::try_from(w.r[1]).map_err(|_| bad("builtin id"))?;
             if builtin::name(id) == "?builtin" { return Err(bad("builtin id")); }
         }
+        76 => {
+            let id = u32::try_from(w.imm).map_err(|_| bad("type id"))?;
+            if id as usize >= ntypes { return Err(bad("type id")); }
+        }
         _ => {}
     }
     Ok(())
 }
 
-fn read_instr(r: &mut Reader<'_>, nregs: u16, code_len: usize, nfuncs: usize, nstrings: usize, nhost: usize) -> Result<Instr> {
+fn read_instr(r: &mut Reader<'_>, nregs: u16, code_len: usize, nfuncs: usize, nstrings: usize, nhost: usize, ntypes: usize) -> Result<Instr> {
     let tag = r.u16()?;
     let line = r.u32()?;
     let col = r.u32()?;
@@ -458,7 +476,7 @@ fn read_instr(r: &mut Reader<'_>, nregs: u16, code_len: usize, nfuncs: usize, ns
     let mut extra = Vec::with_capacity(n);
     for _ in 0..n { extra.push(r.u16()?); }
     let w = Wire { tag, line, col, r: regs, imm, imm2, extra };
-    validate_wire(&w, nregs, code_len, nfuncs, nstrings, nhost)?;
+    validate_wire(&w, nregs, code_len, nfuncs, nstrings, nhost, ntypes)?;
     Ok(Instr { op: decode_op(w)?, line, col })
 }
 
@@ -490,6 +508,11 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
 
     w.u32(script.code.strings.len() as u32);
     for s in &script.code.strings { w.str(s); }
+
+    // v7（D-047）：`ContainsTyped` 引用的静态类型池。类型拥有 String/Vec，
+    // 不能直接塞进 Copy 的 Instr，所以走旁路表 + u32 索引。
+    w.u32(script.code.types.len() as u32);
+    for t in &script.code.types { write_ty(&mut w, t); }
 
     w.u32(script.code.funcs.len() as u32);
     for f in &script.code.funcs {
@@ -574,6 +597,12 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
     let mut strings: Vec<Rc<str>> = Vec::with_capacity(plausible_cap(n_strings, bytes, r.pos));
     for _ in 0..n_strings { strings.push(Rc::from(r.str()?.as_str())); }
 
+    // v7（D-047）：静态类型池；指令里的 imm 是这里的下标。
+    let n_types = r.u32()? as usize;
+    if n_types > bytes.len() { return Err(Error::io("cache: implausible type pool size")); }
+    let mut types = Vec::with_capacity(plausible_cap(n_types, bytes, r.pos));
+    for _ in 0..n_types { types.push(read_ty(&mut r)?); }
+
     let n_funcs = r.u32()? as usize;
     if n_funcs > bytes.len() { return Err(Error::io("cache: implausible function count")); }
     let mut funcs: Vec<Function> = Vec::with_capacity(plausible_cap(n_funcs, bytes, r.pos));
@@ -585,7 +614,7 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
         if n_code > bytes.len() { return Err(Error::io("cache: implausible code length")); }
         let mut code = Vec::with_capacity(plausible_cap(n_code, bytes, r.pos));
         for _ in 0..n_code {
-            code.push(read_instr(&mut r, nregs, n_code, n_funcs, n_strings, nhost)?);
+            code.push(read_instr(&mut r, nregs, n_code, n_funcs, n_strings, nhost, types.len())?);
         }
         funcs.push(Function { name: fname, code, nregs, params: sig.params, ret: sig.ret });
     }
@@ -668,7 +697,7 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
         }
     }
 
-    let program = Program { funcs, ids, strings };
+    let program = Program { funcs, ids, strings, types };
     validate::validate(&program, nhost)?;
 
     Ok(Script {

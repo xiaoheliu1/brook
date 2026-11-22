@@ -259,6 +259,11 @@ impl Engine {
     typed_registration!(register_typed4, A: a, B: b, C: c, D: d);
     typed_registration!(register_typed5, A: a, B: b, C: c, D: d, E: e);
     typed_registration!(register_typed6, A: a, B: b, C: c, D: d, E: e, G: g);
+    // The language allows 8 arguments (`MAX_OPERANDS`); host callbacks should
+    // be able to match that ceiling. `F` is skipped as a type-parameter name
+    // because the macro uses it for the closure type.
+    typed_registration!(register_typed7, A: a, B: b, C: c, D: d, E: e, G: g, H: h);
+    typed_registration!(register_typed8, A: a, B: b, C: c, D: d, E: e, G: g, H: h, I: i);
 
     /// Register an opaque Rust type so handlers can receive it by name.
     /// 注册不透明类型名（供诊断与 `Opaque` 的名字校验对齐）。同名不同型
@@ -287,8 +292,10 @@ impl Engine {
         self.host.fingerprint()
     }
 
-    /// Cap the bytes a script may allocate inside the VM (strings only —
-    /// handles are host-owned and never copied).
+    /// Cap the bytes a script may allocate inside the VM: runtime strings,
+    /// tuples and arrays all consume heap quota (including one slot per
+    /// entry). Opaque handles are host-owned and never copied, but the slot
+    /// holding the handle is still charged.
     pub fn with_heap_limit(mut self, bytes: u64) -> Self {
         self.max_heap = bytes;
         self
@@ -633,22 +640,23 @@ impl<'a> ImportLoader<'a> {
             0,
             self.base_dir.clone(),
         )?;
+        // `self` is consumed: move the ASTs and the combined source instead of
+        // cloning every function (a hidden O(program size) cost on EVERY
+        // compile, including scripts with no imports).
         let mut funcs = Vec::new();
-        for unit in &self.units {
-            funcs.extend(unit.program.funcs.iter().cloned());
+        let mut deps = Vec::new();
+        for unit in self.units {
+            if !unit.is_main {
+                deps.push((unit.path, cache::hash_source(&unit.src), unit.is_file));
+            }
+            funcs.extend(unit.program.funcs);
         }
-        let deps = self
-            .units
-            .iter()
-            .filter(|u| !u.is_main)
-            .map(|u| (u.path.clone(), cache::hash_source(&u.src), u.is_file))
-            .collect();
         Ok((
             ast::Program {
                 imports: Vec::new(),
                 funcs,
             },
-            self.combined.clone(),
+            self.combined,
             deps,
         ))
     }
@@ -671,9 +679,17 @@ impl<'a> ImportLoader<'a> {
         // 幂等去重 + 循环检测，两个集合各管一件事：
         //   loaded 已完成 → 重复 import 静默跳过（幂等）
         //   stack 正在加载 → A 引 B、B 引 A 的真循环，编译报错
-        let key = std::fs::canonicalize(&path)
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| path.clone());
+        // 去重 key 只在【主文件脚本】上做 canonicalize：它可能以相对路径
+        // 传入，需要与依赖的绝对路径认成同一份。依赖路径在 `resolve` 里
+        // 已为安全护栏做过 canonicalize，虚拟名（`<string>` / resolver）
+        // 则根本不是路径——对它们调 fs 是每次编译白付的 syscall。
+        let key = if is_main && is_file {
+            std::fs::canonicalize(&path)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| path.clone())
+        } else {
+            path.clone()
+        };
         if self.loaded.contains(&key) {
             return Ok(());
         }
@@ -685,19 +701,26 @@ impl<'a> ImportLoader<'a> {
         }
         self.stack.push(key.clone());
 
-        // 第一遍解析：提取本单元的 import 名单（span 为单元本地行号，
-        // 仅用于定位依赖声明；最终 AST 在下方按拼接视图行号重解析）
-        let program0 = Parser::new(Lexer::new(&src).tokenize()?)
-            .parse()
-            .map_err(|e| {
-                Error::parse(
-                    format!("{} (来自 \"{}\")", e.message, path),
-                    e.span.unwrap_or_default(),
-                )
-            })?;
+        // 第一遍解析只为了拿 import 名单。`import` 是关键字，任何 Import
+        // token 都必然在源码里留下 "import" 子串，所以 `contains` 是安全的
+        // 过近似：没有这个子串时一定没有依赖，跳过整遍 lex+parse。
+        // 有语法错误时仍由下方按拼接视图行号的那遍解析报错（同样带来源）。
+        let imports: Vec<ast::ImportDecl> = if src.contains("import") {
+            Parser::new(Lexer::new(&src).tokenize()?)
+                .parse()
+                .map_err(|e| {
+                    Error::parse(
+                        format!("{} (来自 \"{}\")", e.message, path),
+                        e.span.unwrap_or_default(),
+                    )
+                })?
+                .imports
+        } else {
+            Vec::new()
+        };
 
         // 递归：依赖先 placement（依赖在前、主脚本最后）
-        for imp in &program0.imports {
+        for imp in &imports {
             Self::validate_import_name(&imp.name, imp.span)?;
             let (dep_path, dep_src, dep_base, dep_is_file) =
                 self.resolve(base_dir.as_deref(), &imp.name, imp.span)?;
@@ -811,10 +834,12 @@ impl<'a> ImportLoader<'a> {
                 span,
             ));
         }
+        // 返回 canon_path：load_unit 的 key 与依赖清单都直接用它，省掉
+        // 第二次 canonicalize；deps_fresh 按真实路径复核也更稳。
         Ok((
-            path.display().to_string(),
+            canon_path.display().to_string(),
             src,
-            path.parent().map(|p| p.to_path_buf()),
+            canon_path.parent().map(|p| p.to_path_buf()),
             true,
         ))
     }

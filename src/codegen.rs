@@ -25,6 +25,18 @@ pub struct Codegen<'a> {
     strings: Vec<Rc<str>>,
     string_ids: HashMap<String, u32>,
     ids: HashMap<String, FuncId>,
+    /// Dedup pool for the static types embedded by `ContainsTyped` (D-047).
+    types: Vec<Ty>,
+}
+
+/// Intern a static type so instructions can carry a cheap `u32` index instead
+/// of an owned `Ty` (which would break `Instr: Copy`).
+fn intern_ty(pool: &mut Vec<Ty>, ty: Ty) -> u32 {
+    if let Some(i) = pool.iter().position(|t| *t == ty) {
+        return i as u32;
+    }
+    pool.push(ty);
+    (pool.len() - 1) as u32
 }
 
 impl<'a> Codegen<'a> {
@@ -35,6 +47,7 @@ impl<'a> Codegen<'a> {
             strings: Vec::new(),
             string_ids: HashMap::new(),
             ids: HashMap::new(),
+            types: Vec::new(),
         }
     }
 
@@ -50,6 +63,7 @@ impl<'a> Codegen<'a> {
             funcs,
             ids: self.ids,
             strings: self.strings,
+            types: self.types,
         })
     }
 
@@ -66,6 +80,7 @@ impl<'a> Codegen<'a> {
             ids: &self.ids,
             strings: &mut self.strings,
             string_ids: &mut self.string_ids,
+            types: &mut self.types,
             code: Vec::new(),
             next_reg: 0,
             reg_overflow: false,
@@ -106,6 +121,7 @@ struct FuncCodegen<'a> {
     ids: &'a HashMap<String, FuncId>,
     strings: &'a mut Vec<Rc<str>>,
     string_ids: &'a mut HashMap<String, u32>,
+    types: &'a mut Vec<Ty>,
     code: Vec<Instr>,
     next_reg: u16,
     /// Set when a function needs more than `u16::MAX` registers; surfaced as a
@@ -838,6 +854,23 @@ impl<'a> FuncCodegen<'a> {
         }
         let regs = Regs::new(&arg_regs);
         let dst = dst_hint.unwrap_or_else(|| self.fresh());
+
+        // `contains` compares *untagged* slots, so it must carry the static
+        // element type into the VM (D-047). The checker already unified the
+        // needle with the array element type; a surviving inference variable
+        // takes the same i64 default as parameter resolution.
+        if name == "contains" && arg_regs.len() == 2 {
+            let elem = match &arg_tys[1] {
+                Ty::Var(_) => Ty::I64,
+                t => t.clone(),
+            };
+            let ty = intern_ty(self.types, elem);
+            self.emit(
+                Op::ContainsTyped { hay: arg_regs[0], needle: arg_regs[1], dst, ty },
+                span,
+            );
+            return Ok((dst, Ty::Bool));
+        }
 
         if let Some(bid) = builtin::id(name) {
             // Two builtins are type-specialized at the call site: `to_str`

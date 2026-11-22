@@ -21,6 +21,7 @@ fn program(op: Op, nregs: u16) -> Program {
         }],
         ids: HashMap::new(),
         strings: vec![Rc::from("x")],
+        types: Vec::new(),
     }
 }
 
@@ -114,6 +115,7 @@ fn call_script_args_stay_inside_the_callee_window() -> brook::Result<()> {
         funcs: vec![caller, callee.clone()],
         ids: HashMap::new(),
         strings: vec![Rc::from("x")],
+        types: Vec::new(),
     };
 
     // 2 args into a 1-register window: rejected.

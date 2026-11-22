@@ -35,6 +35,7 @@ fn hostile_sbc_rejects_params_over_register_window() {
         }],
         ids: HashMap::from([("f".to_string(), 0u16)]),
         strings: vec![],
+        types: Vec::new(),
     };
     let script = Script {
         sigs: HashMap::from([(
@@ -139,6 +140,7 @@ fn deep_nested_type_in_cache_is_rejected() {
         }],
         ids: HashMap::from([("f".to_string(), 0u16)]),
         strings: vec![],
+        types: Vec::new(),
     };
     let script = Script {
         sigs: HashMap::from([(
@@ -244,6 +246,7 @@ fn encode_program(
         }],
         ids: HashMap::from([(name.to_string(), 0u16)]),
         strings: vec![],
+        types: Vec::new(),
     };
     let script = Script {
         sigs: HashMap::from([(
@@ -324,6 +327,7 @@ fn hostile_sbc_rejects_id_table_mismatch() {
         ],
         ids: HashMap::from([("f".to_string(), 0u16)]),
         strings: vec![],
+        types: Vec::new(),
     };
     let script = Script {
         sigs: HashMap::new(),
@@ -493,6 +497,7 @@ fn cache_deps_outside_import_dir_invalidate() {
         }],
         ids: HashMap::from([("main".to_string(), 0u16)]),
         strings: vec![],
+        types: Vec::new(),
     };
     let hostile = Script {
         sigs: HashMap::new(),

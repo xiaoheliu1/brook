@@ -6,5 +6,5 @@
 *.rs text
 *.md text
 *.toml text
-*.ms text
+*.bk text
 *.lock text

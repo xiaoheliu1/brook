@@ -444,3 +444,113 @@ fn array_display_is_stable() {
 fn bridge_check() {
     let _ = Rc::new(RefCell::new(0i64));
 }
+
+// ===========================================================================
+// D-047 回归：`contains` 的槽位类型混淆
+//
+// 旧实现在 `a.0 != b.0` 时把两个 slot 一律当堆索引：不相等的标量会被
+// 解引用成堆对象，轻则静默错值（两个相同字符串在 heap[1]/heap[2]），
+// 重则自相似递归打爆进程栈。新实现由 codegen 把元素静态类型写进指令，
+// VM 按类型决定「比位 / 比字符串内容 / 递归」。
+// ===========================================================================
+
+#[test]
+fn contains_nested_array_never_overflows_the_stack() {
+    // 这两个用例在修复前均为 STATUS_STACK_OVERFLOW（catch_unwind 抓不住）。
+    assert_both!(
+        "func main() { let xs = [[1], [2]]  contains(xs, [2]) }",
+        "main",
+        vec![],
+        Value::Bool(true)
+    );
+    assert_both!(
+        "func main() { let xs = [[1], [2]]  contains(xs, [3]) }",
+        "main",
+        vec![],
+        Value::Bool(false)
+    );
+    // 更深的嵌套同样按静态类型逐层展开，深度受 MAX_NESTING 约束。
+    assert_both!(
+        "func main() { let xs = [[[1]], [[2]]]  contains(xs, [[2]]) }",
+        "main",
+        vec![],
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn contains_scalar_never_looks_up_a_heap_index() {
+    // 修复前：7 个 substr 让 heap[1..=7] 都是 "a"，needle=1 被当 heap[1]，
+    // 与元素 2 解引用出的 heap[2] 相等 → contains 错为 true。
+    assert_both!(
+        r#"func main() {
+            let s1 = substr("aa", 0, 1)
+            let s2 = substr("aa", 0, 1)
+            let s3 = substr("aa", 0, 1)
+            let s4 = substr("aa", 0, 1)
+            let s5 = substr("aa", 0, 1)
+            let s6 = substr("aa", 0, 1)
+            let s7 = substr("aa", 0, 1)
+            let xs = [5]
+            contains(xs, 1)
+        }"#,
+        "main",
+        vec![],
+        Value::Bool(false)
+    );
+    assert_both!(
+        "func main() { let xs = [5]  contains(xs, 5) }",
+        "main",
+        vec![],
+        Value::Bool(true)
+    );
+    assert_both!(
+        "func main() { let xs = [1.5, 2.5]  contains(xs, 2.5) }",
+        "main",
+        vec![],
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn contains_tuple_elements_and_string_haystack() {
+    // 教程里的记录数组：元组元素按各字段静态类型逐项比较。
+    assert_both!(
+        r#"func main() {
+            let xs = [("a.txt", 3), ("b.log", 5)]
+            contains(xs, ("b.log", 5))
+        }"#,
+        "main",
+        vec![],
+        Value::Bool(true)
+    );
+    assert_both!(
+        r#"func main() {
+            let xs = [("a.txt", 3), ("b.log", 5)]
+            contains(xs, ("b.log", 9))
+        }"#,
+        "main",
+        vec![],
+        Value::Bool(false)
+    );
+    // str haystack 保持子串语义（不经过 slots_equal_ty）。
+    assert_both!(
+        r#"func main() { contains("hello world", "world") }"#,
+        "main",
+        vec![],
+        Value::Bool(true)
+    );
+}
+
+/// Element assignment is a v2 feature (ADR-018). A bare `a[i] = v` should not
+/// leak a token dump — say what is unsupported and what to use instead.
+#[test]
+fn element_assignment_has_an_actionable_parse_error() {
+    let engine = Engine::new();
+    let err = engine
+        .load_str("func f() { let a = [1, 2]  a[0] = 5 }")
+        .unwrap_err();
+    assert!(err.message.contains("a[i] = v"), "got: {}", err.message);
+    assert!(err.message.contains("not supported yet"), "got: {}", err.message);
+    assert!(err.message.contains("push"), "got: {}", err.message);
+}

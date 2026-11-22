@@ -382,6 +382,15 @@ impl Parser {
             }
             _ => {
                 let e = self.parse_expr()?;
+                if self.check(&TokenKind::Assign) {
+                    // A bare `a[i] = v` (or any non-variable LHS) parses the
+                    // expression fine and then trips over `=`. Say what is
+                    // actually unsupported instead of leaking a token dump.
+                    return Err(Error::parse(
+                        "assignment target must be a variable; element assignment (`a[i] = v`) is not supported yet — use push or rebuild the array",
+                        self.peek_span(),
+                    ));
+                }
                 Ok(Stmt::Expr(e))
             }
         }

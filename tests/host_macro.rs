@@ -128,3 +128,34 @@ fn six_argument_registration_is_supported() -> brook::Result<()> {
     assert_eq!(engine.call(&script, "go", vec![])?, Value::I64(21));
     Ok(())
 }
+
+/// The language accepts up to `MAX_OPERANDS` = 8 arguments; typed host
+/// registration must reach the same ceiling (both the `-> R` and inferred
+/// forms of the macro).
+#[test]
+fn seven_and_eight_argument_registration_are_supported() -> brook::Result<()> {
+    let mut engine = Engine::new();
+    register_fn!(
+        engine,
+        "seven",
+        (i64, i64, i64, i64, i64, i64, i64) -> i64,
+        |a, b, c, d, e, g, h| a + b + c + d + e + g + h,
+    )?;
+    register_fn!(
+        engine,
+        "eight",
+        (i64, i64, i64, i64, i64, i64, i64, i64) -> i64,
+        |a, b, c, d, e, g, h, i| a + b + c + d + e + g + h + i,
+    )?;
+    register_fn!(
+        engine,
+        "inferred7",
+        (i64, i64, i64, i64, i64, i64, i64),
+        |a, b, c, d, e, g, h| a + b + c + d + e + g + h,
+    )?;
+    let script = engine.load_str(
+        "func go() { seven(1,2,3,4,5,6,7) + eight(1,1,1,1,1,1,1,1) + inferred7(1,1,1,1,1,1,1) }",
+    )?;
+    assert_eq!(engine.call(&script, "go", vec![])?, Value::I64(28 + 8 + 7));
+    Ok(())
+}

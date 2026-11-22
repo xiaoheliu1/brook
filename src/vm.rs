@@ -19,6 +19,7 @@ use crate::engine::HostRegistry;
 use crate::error::{Error, Result, TraceFrame};
 use crate::ir::{self, FuncId, Instr, Op, Program, Reg, Regs};
 use crate::span::Span;
+use crate::ty::Ty;
 use crate::value::{Handle, Value};
 use std::rc::Rc;
 
@@ -750,6 +751,16 @@ impl<'a> Vm<'a> {
                         return Err(err_at("step (gas) limit exceeded", instr.span()));
                     }
                 }
+                Op::ContainsTyped { hay, needle, dst, ty } => {
+                    let slot = self.contains_typed(base, hay, needle, ty, instr.span())?;
+                    self.regs[base + dst as usize] = slot;
+                    // 和 CallBuiltin 一样结算 O(n) 扫描的 gas（D-047：嵌套
+                    // 结构的逐元素比较必须计费，否则千倍放大）。
+                    steps = steps.saturating_add(std::mem::take(&mut self.pending));
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
+                }
 
                 // ---- tuples ----
                 Op::MakeTuple { dst, elems } => {
@@ -904,26 +915,138 @@ impl<'a> Vm<'a> {
         Ok(())
     }
 
-    /// Structural equality of two slots (scalars by bit pattern, heap objects
-    /// by content). Powers `contains(arr, v)` for arrays. Depth is bounded by
-    /// the static type system: cyclic arrays are unconstructible (ADR-018).
-    fn slots_equal(&self, a: Slot, b: Slot) -> bool {
+    /// Structural equality driven by the needle's **static** element type.
+    ///
+    /// `Slot` is an untagged `u64`: two unequal scalars look exactly like two
+    /// heap indices, so the old "try both as heap indices" comparison could
+    /// return a wrong answer (equal strings at indices 1 and 2) or recurse
+    /// forever on a self-similar nested array (D-047). The type comes from
+    /// codegen; recursion depth is bounded by the static type's nesting (and
+    /// hence by `MAX_NESTING`), so it cannot cycle. `work` accumulates the
+    /// O(n) scan units that `contains_typed` charges as gas.
+    fn slots_equal_ty(
+        &self,
+        a: Slot,
+        b: Slot,
+        ty: &Ty,
+        span: Span,
+        work: &mut u64,
+    ) -> Result<bool> {
         if a.0 == b.0 {
-            // Same bits: equal scalars, or literally the same heap index.
-            return true;
-        }
-        let (ha, hb) = (a.as_heap(), b.as_heap());
-        match (self.heap.get(ha), self.heap.get(hb)) {
-            (Some(HeapObj::Str(x)), Some(HeapObj::Str(y))) => x == y,
-            (Some(HeapObj::Handle(x)), Some(HeapObj::Handle(y))) => x == y,
-            (Some(HeapObj::Tuple(x)), Some(HeapObj::Tuple(y))) => {
-                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| self.slots_equal(*p, *q))
+            // Identical scalars, or literally the same heap entry. F64 needs a
+            // value comparison (NaN != NaN, -0.0 == 0.0), and arrays/tuples
+            // are structural: a repeated NaN element must still be unequal.
+            // Skipping the shortcut here also keeps the VM aligned with
+            // `Value`'s derived `PartialEq` on the interpreter path.
+            match ty {
+                Ty::F64 | Ty::Arr(_) | Ty::Tuple(_) => {}
+                _ => return Ok(true),
             }
-            (Some(HeapObj::Arr(x)), Some(HeapObj::Arr(y))) => {
-                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| self.slots_equal(*p, *q))
-            }
-            _ => false,
         }
+        match ty {
+            // Scalars are stored inline. I64/Bool compare by bits; F64 uses
+            // IEEE value equality so it agrees with `==` and `Value::eq`.
+            // Unequal bits are never reinterpreted as heap indices.
+            Ty::I64 | Ty::Bool => Ok(false),
+            Ty::F64 => Ok(a.as_f64() == b.as_f64()),
+            Ty::Str => {
+                let x = self.heap_str(a.as_heap(), span)?;
+                let y = self.heap_str(b.as_heap(), span)?;
+                *work += (x.len() + y.len()) as u64;
+                Ok(x == y)
+            }
+            Ty::Handle(_) => {
+                let x = self.heap_handle(a.as_heap(), span)?;
+                let y = self.heap_handle(b.as_heap(), span)?;
+                Ok(x == y)
+            }
+            Ty::Arr(elem) => {
+                let x = match self.heap.get(a.as_heap()) {
+                    Some(HeapObj::Arr(v)) => v,
+                    _ => return Err(err_at("contains: expected array element", span)),
+                };
+                let y = match self.heap.get(b.as_heap()) {
+                    Some(HeapObj::Arr(v)) => v,
+                    _ => return Err(err_at("contains: expected array element", span)),
+                };
+                if x.len() != y.len() {
+                    return Ok(false);
+                }
+                *work += x.len() as u64 * 8;
+                for (p, q) in x.iter().zip(y.iter()) {
+                    if !self.slots_equal_ty(*p, *q, elem, span, work)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Ty::Tuple(tys) => {
+                let x = match self.heap.get(a.as_heap()) {
+                    Some(HeapObj::Tuple(v)) => v,
+                    _ => return Err(err_at("contains: expected tuple element", span)),
+                };
+                let y = match self.heap.get(b.as_heap()) {
+                    Some(HeapObj::Tuple(v)) => v,
+                    _ => return Err(err_at("contains: expected tuple element", span)),
+                };
+                if x.len() != y.len() || x.len() != tys.len() {
+                    return Ok(false);
+                }
+                *work += x.len() as u64 * 8;
+                for ((p, q), t) in x.iter().zip(y.iter()).zip(tys.iter()) {
+                    if !self.slots_equal_ty(*p, *q, t, span, work)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            // Cannot escape a successful typecheck (codegen maps `Var` to the
+            // i64 default and `contains` rejects `Unit` operands).
+            Ty::Var(_) | Ty::Unit => Ok(false),
+        }
+    }
+
+    /// Typed replacement for the old `CONTAINS` builtin (D-047).
+    fn contains_typed(
+        &mut self,
+        base: usize,
+        hay: Reg,
+        needle: Reg,
+        ty_id: u32,
+        span: Span,
+    ) -> Result<Slot> {
+        let ty = self
+            .program
+            .types
+            .get(ty_id as usize)
+            .ok_or_else(|| err_at("contains: invalid element type id", span))?;
+        let hay_slot = self.regs[base + hay as usize];
+        let needle_slot = self.regs[base + needle as usize];
+        let mut work = 0u64;
+        let found = match self.heap.get(hay_slot.as_heap()) {
+            // String substring containment (unchanged semantics).
+            Some(HeapObj::Str(s)) => {
+                let n = self.heap_str(needle_slot.as_heap(), span)?;
+                work += s.len() as u64;
+                s.contains(n)
+            }
+            // Structural scan. Every element (including nested contents) is
+            // charged through `slots_equal_ty`, not just the top-level length.
+            Some(HeapObj::Arr(items)) => {
+                work += items.len() as u64;
+                let mut found = false;
+                for e in items {
+                    if self.slots_equal_ty(*e, needle_slot, ty, span, &mut work)? {
+                        found = true;
+                        break;
+                    }
+                }
+                found
+            }
+            _ => return Err(err_at("contains expects a str or array", span)),
+        };
+        self.charge_work(work);
+        Ok(Slot::i64(if found { 1 } else { 0 }))
     }
 
     /// Object identity for opaque handles: `Handle`'s `PartialEq` compares
@@ -1118,34 +1241,12 @@ impl<'a> Vm<'a> {
                 Ok(Slot::i64(r as i64))
             }
             CONTAINS => {
-                if n != 2 {
-                    return Err(err_at("builtin arity", span));
-                }
-                let hay_idx = self.regs[at(0)].as_heap();
-                let needle = self.regs[at(1)];
-                // 先算结果与工作量、释放借用、再计费（3.4）。
-                let found = match self.heap.get(hay_idx) {
-                    // String: substring containment, zero-copy（D-046 4.3；
-                    // 旧实现每次调用 to_string 两份全量拷贝）。
-                    Some(HeapObj::Str(s)) => {
-                        let needle_idx = self.regs[at(1)].as_heap();
-                        let needle_s = self.heap_str(needle_idx, span)?;
-                        let found = s.contains(needle_s);
-                        (found, s.len() as u64)
-                    }
-                    // Array/tuple: element scan with structural equality.
-                    Some(HeapObj::Arr(items)) => (
-                        items.iter().any(|e| self.slots_equal(*e, needle)),
-                        items.len() as u64,
-                    ),
-                    Some(HeapObj::Tuple(items)) => (
-                        items.iter().any(|e| self.slots_equal(*e, needle)),
-                        items.len() as u64,
-                    ),
-                    _ => return Err(err_at("contains expects a str or array", span)),
-                };
-                self.charge_work(found.1);
-                Ok(Slot(if found.0 { 1 } else { 0 }))
+                // Retired in D-047: untagged slots cannot say whether a bit
+                // pattern is a scalar or a heap index, so the old comparison
+                // could silently return a wrong answer or recurse forever.
+                // VERSION 8 rejects every old cache; a hand-crafted one must
+                // be refused too rather than reaching that path again.
+                Err(err_at("contains requires typed bytecode; recompile", span))
             }
             SUBSTR => {
                 if n != 3 {

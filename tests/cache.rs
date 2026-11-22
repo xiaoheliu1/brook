@@ -152,11 +152,12 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
         Op::CallScript { func: 0, args: three(), dst: 4 },
         Op::CallHost { func: 0, args: three(), dst: 4 },
         Op::CallBuiltin { func: 0, args: three(), dst: 4 },
+        Op::ContainsTyped { hay: 1, needle: 2, dst: 4, ty: 0 },
         Op::MakeTuple { dst: 4, elems: three() },
         Op::GetTuple { dst: 4, base: 1, index: 1 },
         Op::Ret { src: 4 },
     ];
-    assert_eq!(ops.len(), 71, "update this test when adding opcodes");
+    assert_eq!(ops.len(), 72, "update this test when adding opcodes");
 
     let mut ids = HashMap::new();
     ids.insert("ops".to_string(), 0u16);
@@ -169,6 +170,8 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
             }],
             ids,
             strings: vec![Rc::from("constant")],
+            // `ContainsTyped` above points at type 0.
+            types: vec![Ty::I64],
         },
         sigs: HashMap::new(),
         name: "<opcode-test>".into(),
@@ -272,6 +275,19 @@ fn damaged_cache_returns_errors_without_panicking() -> brook::Result<()> {
     Ok(())
 }
 
+/// D-049 changed f64 `contains` from bitwise to IEEE value equality, so a v7
+/// cache must be rebuilt even though its wire layout is unchanged.
+#[test]
+fn v7_cache_is_rejected_after_float_equality_change() -> brook::Result<()> {
+    let (engine, script) = script_with_host()?;
+    let fp = engine_host_fp(&engine);
+    let mut bytes = cache::encode(&script, &fp);
+    bytes[4..6].copy_from_slice(&7u16.to_le_bytes());
+    let err = cache::decode(&bytes, &fp).unwrap_err();
+    assert!(err.message.contains("version 7 != 8"), "{}", err.message);
+    Ok(())
+}
+
 // The engine keeps its registry private; rebuild the same fingerprint from the
 // public registration API for direct cache::decode calls.
 fn engine_host_fp(_engine: &Engine) -> HostFingerprint {
@@ -303,4 +319,126 @@ fn compile_cached_needs_no_source_file_on_disk() -> brook::Result<()> {
     let third = engine.compile_cached("func price(x) { x * 7 }", "<assets>", &cache)?;
     assert_eq!(engine.call(&third, "price", vec![Value::I64(10)])?, Value::I64(70));
     Ok(())
+}
+
+/// D-047/D-049: the element type of `contains` must survive encode -> decode.
+/// A v6 cache (which used the untyped builtin) and a v7 cache (which compared
+/// f64 by bits) are both rejected by the version gate; a v8 cache must produce
+/// exactly the same answers after a round-trip.
+#[test]
+fn typed_contains_survives_sbc_roundtrip() -> brook::Result<()> {
+    let engine = Engine::new();
+    let src = r#"func f() {
+        let rows = [("a.txt", 3), ("b.log", 5)]
+        contains(rows, ("b.log", 5))
+    }
+    func nested() {
+        let xs = [[1], [2]]
+        contains(xs, [2])
+    }"#;
+    let script = engine.load_str(src)?;
+    assert!(!script.code.types.is_empty(), "codegen must intern the element types");
+
+    let path = temp_dir("typed_contains").join("prog.sbc");
+    engine.save_sbc(&script, &path)?;
+    let loaded = engine.load_sbc(&path)?;
+
+    assert_eq!(script.code.types, loaded.code.types);
+    assert_eq!(format!("{:?}", script.code.funcs), format!("{:?}", loaded.code.funcs));
+    for func in ["f", "nested"] {
+        assert_eq!(
+            engine.call(&script, func, vec![])?,
+            engine.call(&loaded, func, vec![])?,
+            "behavior diverged after round-trip for `{func}`"
+        );
+        assert_eq!(engine.call(&loaded, func, vec![])?, Value::Bool(true));
+    }
+    Ok(())
+}
+
+/// A hand-crafted cache with a type id past the pool must be rejected, not
+/// indexed unchecked by the VM.
+#[test]
+fn sbc_rejects_out_of_range_contains_type_id() -> brook::Result<()> {
+    let engine = Engine::new();
+    let script = engine.load_str("func f() { let xs = [1] contains(xs, 1) }")?;
+    let fp: HostFingerprint = Vec::new();
+    let mut bytes = cache::encode(&script, &fp);
+
+    // Tag 76 is `ContainsTyped`; its wire record puts the type id in `imm`
+    // right after (tag, line, col, r0, r1, r2) = 2+4+4+6 bytes.
+    let needle = b"\x4c\x00"; // 76u16 little-endian
+    let pos = bytes.windows(2).position(|w| w == needle).expect("ContainsTyped tag");
+    let imm = pos + 2 + 4 + 4 + 6;
+    bytes[imm..imm + 8].copy_from_slice(&99u64.to_le_bytes());
+
+    let err = cache::decode(&bytes, &fp).unwrap_err();
+    assert!(err.message.contains("type id out of range"), "{}", err.message);
+    Ok(())
+}
+
+/// Deterministic corruption sweep: every truncated prefix and a few hundred
+/// single-/multi-byte mutations must return `Err` (or at worst a still-valid
+/// program) without panicking. This is the cheap fuzz guard for the binary
+/// decoder; no external fuzzer dependency is needed.
+#[test]
+fn deterministic_cache_corruption_never_panics() -> brook::Result<()> {
+    let (engine, script) = script_with_host()?;
+    let fp = engine_host_fp(&engine);
+    let bytes = cache::encode(&script, &fp);
+    assert!(bytes.len() > 64);
+
+    let mut cases: Vec<Vec<u8>> = Vec::new();
+
+    // Truncation at structural boundaries and a spread of interior offsets.
+    let step = (bytes.len() / 64).max(1);
+    for n in (0..bytes.len()).step_by(step) {
+        cases.push(bytes[..n].to_vec());
+    }
+    cases.push(bytes.clone());
+
+    // Bit flips with a fixed LCG so failures are reproducible in CI.
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    for round in 0..256usize {
+        let mut mutated = bytes.clone();
+        let flips = 1 + (round % 4);
+        for _ in 0..flips {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let pos = (seed as usize) % mutated.len();
+            mutated[pos] ^= (seed >> 33) as u8 | 1;
+        }
+        cases.push(mutated);
+    }
+
+    // Pure random-looking payloads of various lengths.
+    for len in [0usize, 1, 3, 7, 16, 64, 256, bytes.len() - 1, bytes.len() + 8] {
+        let mut payload = Vec::with_capacity(len);
+        for _ in 0..len {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            payload.push((seed >> 56) as u8);
+        }
+        cases.push(payload);
+    }
+
+    for (i, case) in cases.iter().enumerate() {
+        cache::decode(case, &fp).unwrap_err_or_valid(i);
+    }
+    Ok(())
+}
+
+/// Test-only helper: keeps the loop body terse while still checking that a
+/// successful decode produced the expected host fingerprint. A corrupted cache
+/// may decode successfully only if the mutation happened to preserve all
+/// semantics; that is harmless.
+trait CorruptResultExt {
+    fn unwrap_err_or_valid(self, case: usize);
+}
+
+impl CorruptResultExt for brook::Result<Script> {
+    fn unwrap_err_or_valid(self, case: usize) {
+        match self {
+            Ok(script) => assert_eq!(script.host_fp.len(), 1, "case {case}: unexpected script"),
+            Err(err) => assert_eq!(err.kind, brook::ErrorKind::Io, "case {case}: {err}"),
+        }
+    }
 }

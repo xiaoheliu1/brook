@@ -194,6 +194,13 @@ pub enum Op {
     /// `func` is a builtin id (see `builtin`); string conversion variants are
     /// type-specialized so no runtime type tag is needed.
     CallBuiltin { func: u8, args: Regs, dst: Reg },
+    /// Structural `contains` with the needle's **static** element type.
+    ///
+    /// `Slot` is an untagged `u64`: comparing two unequal scalars by reading
+    /// them as heap indices is a silent wrong answer (and, with self-similar
+    /// arrays, unbounded recursion). Codegen knows the element type, so it is
+    /// recorded as an index into `Program::types` (D-047).
+    ContainsTyped { hay: Reg, needle: Reg, dst: Reg, ty: u32 },
 
     // ---- tuples ----
     MakeTuple { dst: Reg, elems: Regs },
@@ -234,6 +241,9 @@ pub struct Program {
     /// name -> function id, covering script functions only.
     pub ids: HashMap<String, FuncId>,
     pub strings: Vec<Rc<str>>,
+    /// Deduplicated static types referenced by `ContainsTyped`. Keeping the
+    /// type in a side table keeps `Instr` `Copy` (types own `Vec`/`String`).
+    pub types: Vec<Ty>,
 }
 
 impl Program {
