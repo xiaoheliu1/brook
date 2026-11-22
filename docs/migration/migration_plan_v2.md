@@ -61,13 +61,14 @@ map literal（so_demo 0 次）、闭包（合计 3 处）、eval（0）、is_def
 | print 接管 / print_raw | rhai_demo on_print + print_raw | brook 无 print：脚本输出全走宿主 `log`/`print_raw` 注册（形态不变） |
 | stop_task 不可捕获终止 | rhai_demo 退出码 3/5 依赖 | brook 宿主函数返回后由宿主主循环短路（RunCtx.cancelled 检查点已有机制承接） |
 
-### 2.4 真正的难点清单（需要设计决策，共 6 个）
+### 2.4 真正的难点清单（需要设计决策，全量迁移口径下共 7 个）
 
 1. **hold_key/hold_mouse(name, 闭包)**（rhai_demo，脚本 3 处调用）→ 方案 A：宿主 `hold_begin(name)` / `hold_end()` 显式对（急停护栏 Drop 语义改为宿主轮次结束兜底）；方案 B：brook 加块作用域原语（引擎改动）。**推荐 A**（零引擎改动，脚本改写量 3 处）。
 2. **exec/run_plugin 的 Map spec**（脚本 8 处，含嵌套 env Map）→ 位置参数 `run_plugin(argv: [str], json_input: str, env: [(str,str)], cwd: str)`；`json_input` 保持字符串透传（POC 已验证）。
 3. **json_parse/json_str（Dynamic 进出）**→ JSON 是宿主侧事务：`json_parse(s) -> (ok, [ (path, kind, value_str) ])` 扁平键值数组？或按"脚本实际用到的 JSON 形状"（12 处字段访问）定义固定 record 序列。**推荐：宿主按需提供窄接口**（如 `json_get(s, path) -> (ok, value_str)`），JSON 树不过脚本边界——脚本只用 12 处固定字段，窄接口完全覆盖。
 4. **sheet_rows 二维表（Array<Array<Map{3}>>）**→ 零引用之外的 1 处使用（冒烟自检）；改 `[ [(str,str)] ]`？元组的元组数组——brook 数组元素可为元组 ✓ 可表达，但三元信息（kind/value/text）需要第二数组平行或砍字段。**推荐：先砍零引用的 sheet_cell/range/names，sheet_rows 迁移时按实际字段重设计**。
-5. **pick_css 11 字段 / date_parts 12 字段等 8 个 >8 记录** → 分组元组（如 pick → `(found, x, y, w, h, cx, cy, txt)` 8 元 + 剩余字段拆第二元组）或按调用点实际使用的字段裁剪（D-035 分析：每个调用点实际用 ≤8）。
+5. **pick_css 11 字段 / date_parts 12 字段 / win_list 9 / device_info 9 / fs_walk 13 / fs_copy_dir 12 / toast_setup 8（临界）/ ui_dump 11 等 >8 记录** → 分组元组（如 pick → `(found, x, y, w, h, cx, cy, txt)` 8 元 + 剩余字段拆第二元组）或按调用点实际使用的字段裁剪（D-035 分析：每个调用点实际用 ≤8）。**全量迁移口径：零引用的这些函数同样要给出 brook 形态**。
+7. **sheet 二维表族（sheet_rows/range/cell，Array<Array<Map{3}>>）** → `[ [(str,str)] ]` 可表达但 kind/value/text 三元信息需平行数组或字段取舍；按全量迁移口径须给出形态（实现阶段与调用点用法对齐后定稿）。
 6. **eval_js（任意 JS 注入面）** → 脚本侧只用了 3 类常量表达式（visibilityState/focused/scrolly）→ 改 3 个只读专用原语后**裁掉 eval_js**（安全净收益）。
 
 ### 2.5 重载收敛（已定三规则，落点见 so_demo_inventory §5.5）
@@ -86,7 +87,7 @@ map literal（so_demo 0 次）、闭包（合计 3 处）、eval（0）、is_def
 | toolkit 7 文件 | 函数实现逻辑基本不动；**签名/返回改造 ~60 个函数**（Map→元组 13、Array→Vec 13、重载合并 ~15、SEP 拆参 7）；**删除零引用 ~105 个注册**（190 → 实际注册 ~85 名） |
 | Kotlin 侧 | **零改动**（报告协议、NativeBridge 5 个 external、回调面全不变）；caps.txt 同步为 brook 形态 |
 | 脚本 41 个 | 25 生产脚本重写（多为 <50 行小改：Map 索引→元组索引 112 处、方法糖 191 处、插值 2 处）；16 探针/回归脚本按需重写或退役；horn_blow 三元 bug 顺手修 |
-| 预估 | native **~1 周** + 脚本 **2-3 天** + 真机回归 **1-2 天**（perf_run_script/冒烟脚本即验收器） |
+| 预估 | native **1-1.5 周**（全量迁移口径）+ 脚本 **2-3 天** + 真机回归 **1-2 天**（perf_run_script/冒烟脚本即验收器） |
 
 ### 3.2 rhai_demo（PC）——**第二步**（try/catch 与 Page 族是大头）
 
@@ -96,12 +97,12 @@ map literal（so_demo 0 次）、闭包（合计 3 处）、eval（0）、is_def
 | toolkit 19 文件 | 注册收敛（删 35 零引用、重载合并 26、Map→元组 ~27、>8 拆 8）；**Page 30 方法 → page_* 函数族**（POC 已验证形态）；exec/run_plugin spec → 位置参数；json 族窄接口；hold 闭包 → hold_begin/end。实现逻辑大多保留。~1.5 周 |
 | 脚本 34 个 | **主体工作量**：try/catch ~250 处 → (ok,…)+fails.push 模式；方法调用 ~800 处 → 函数式；browser_task_archive（1402 行）单独 2-3 天重构；diag/pdf_watch/archive_flow 各 1 天级。合计 **1.5-2 周** |
 | rhai_demo_gui | 编辑器补全清单换 brook 内置函数源（build.rs gen_fn_signatures 换 brook 的 caps 导出）；不执行脚本，改动小 |
-| 预估 | 宿主 **~1.5 周** + 脚本 **1.5-2 周** + 回归 **2-3 天** |
+| 预估 | 宿主 **~2 周**（全量迁移口径：sheet/toast/show_table 等零引用族也要 brook 形态）+ 脚本 **1.5-2 周** + 回归 **2-3 天** |
 
-### 3.3 宿主"不适合/没用"函数处置清单（授权删除项）
+### 3.3 宿主函数处置口径（全量迁移，2026-11-22 拍板）
 
-- **so_demo 删 ~105 名**：add（演示残留）、battery_level/img_load（别名）、rgb/rgba（改常量）、全部零引用 UI/设备/网络族（device_info、ui_dump、http_get/post/download、press_*、root_* 家族、regex 五件套、media_* 等）
-- **rhai_demo 删 35 名**：draw 族 12（仅 3 名在用）、表格族 3、log 族 4、随机族 4、show_html/show_table/show_text、open_with/launch、click_dialog 族 2、fs_walk/fs_copy_dir/fs_write_bytes、toast
+- **so_demo 全量 190 名**（原拟删 ~105：add、battery_level/img_load 别名、rgb/rgba、device_info/ui_dump/http_get/post/download、press_*、root_* 家族、regex 五件套、media_* 等——现全部迁移，返回形态按 D/E/C 规则改造）
+- **rhai_demo 全量 197 名**（原拟删 35：draw 族 12、表格族 3、log 族 4、随机族 4、show_html/show_table/show_text、open_with/launch、click_dialog 族 2、fs_walk/fs_copy_dir/fs_write_bytes、toast——现全部迁移）
 - **改安全裁剪**：eval_js → 3 个只读原语；rhai 内置 eval 在 brook 天然不存在
 - **保留但标注**：so_demo 的 shell/root（升权面，S2——产品形态，建议加轮级白名单）、rhai_demo 的 exec/run_plugin（live 闸已管）
 
@@ -142,11 +143,11 @@ so_demo：S4 keystore 弱口令、S5 全局明文 HTTP、S6 权限画像宽、S8
 | 2 | **so_demo 脚本重写**（25 生产 + 探针退役） | 41 脚本全部 OK\t；既有任务产物 diff 对账 |
 | 3 | **rhai_demo 宿主迁移**（engine.rs + toolkit 收敛 + Page 族 + json 窄接口 + per-run 上下文） | 276 引擎测试 + check_scripts 移植版；diag.rhai 全绿 |
 | 4 | **rhai_demo 脚本重写**（try/catch 模式改写 + browser_task_archive 重构） | 34 脚本全绿；browser_task_archive 行为对账 |
-| 5 | GUI 补全源切换 + 文档（TUTORIAL 增量） | — |
+| 5 | GUI 补全源切换（⏸ 用户拍板：稳定后再处理）+ 文档（TUTORIAL 增量） | — |
 
-**决策点（需要你拍板）**：
-1. **hold_key/hold_mouse**：推荐方案 A（hold_begin/end 显式对，零引擎改动）——接受吗？
-2. **json 族**：推荐窄接口（json_get(path)），JSON 树不过脚本边界——接受吗？
-3. **零引用删除授权**：so_demo ~105 名 + rhai_demo 35 名，删除后 caps.txt/api_list 同步——确认？
-4. **GUI 范围**：rhai_demo_gui 补全清单是否纳入本次迁移（建议纳入，工作量半天）？
-5. **执行顺序**：so_demo 先（建议）还是 rhai_demo 先？
+**决策点（2026-11-22 用户已拍板）**：
+1. **hold_key/hold_mouse**：✅ 方案 A——注册拆 `hold_begin(name)` / `hold_end()` 两个，按键底层实现/台账/急停护栏零改动，轮次收尾强制松开承接原 Drop 兜底；脚本 3 处调用点改写
+2. **json 族**：✅ 通用路径式三件套（用户要求通用性，非专用函数）：`json_get(s, path) -> (bool, str)`（任意位置取值，值统一字符串）/ `json_len(s, path) -> (bool, i64)`（数组长度/对象键数）/ `json_keys(s, path) -> (bool, [str])`（键列表枚举）。JSON 树不过脚本边界；**JSON 构造**（现 json_str 10 处）实现阶段按脚本实际用法设计通用构造器，同样走"通用非专用"原则，设计后过目
+3. **零引用函数**：❌ 不删——**功能全量迁移，能力面不减**（用户明确否决宿主删除）。可改的只是形态（重载合并 / Map 返回改元组 / >8 字段拆名）。影响：so_demo 190 名收敛后 ~158-160 签名（原估 85），native 工作量 1 周 → **1-1.5 周**（返回形态改造覆盖全部 Map/Array 函数含零引用者）；rhai_demo 197 名 → ~170 签名，toolkit 1.5 周 → **2 周**（sheet 二维表 / toast / show_table 等原拟砍掉的现在都要设计 brook 形态，难点清单 6 → 7 个）；caps.txt / api_list 迁移后仍为全量清单逐名对账
+4. **rhai_demo_gui 补全清单**：⏸ 稳定后再处理（不纳入本次迁移范围）
+5. **执行顺序**：⏸ 待 1-3 落定后由用户定（建议仍为 so_demo 先行）
