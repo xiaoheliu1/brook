@@ -39,6 +39,160 @@ fn intern_ty(pool: &mut Vec<Ty>, ty: Ty) -> u32 {
     (pool.len() - 1) as u32
 }
 
+/// A statically known scalar produced by the constant-folding pass.
+#[derive(Debug, Clone, Copy)]
+enum FoldVal {
+    I64(i64),
+    F64(f64),
+    Bool(bool),
+}
+
+impl FoldVal {
+    fn ty(self) -> Ty {
+        match self {
+            FoldVal::I64(_) => Ty::I64,
+            FoldVal::F64(_) => Ty::F64,
+            FoldVal::Bool(_) => Ty::Bool,
+        }
+    }
+}
+
+/// Evaluate a pure literal subtree into a single scalar.
+///
+/// `None` means "leave this subtree to ordinary codegen". Two classes are
+/// deliberately *not* folded:
+///
+/// * anything with a runtime dependency (variables, calls, indexing, ...);
+/// * operations that would raise a checked error (i64 overflow, div/mod by
+///   zero, `i64::MIN / -1`). Keeping those in the VM preserves the existing
+///   precise runtime diagnostic, and — more importantly — a bad constant in a
+///   branch that never executes must not turn into a compile-time failure.
+///
+/// The type checker has already validated the AST, so literal-only operands of
+/// the same operator necessarily share a type here.
+fn fold_const(expr: &Expr) -> Option<FoldVal> {
+    match expr {
+        Expr::Int(n, _) => Some(FoldVal::I64(*n)),
+        Expr::Float(f, _) => Some(FoldVal::F64(*f)),
+        Expr::Bool(b, _) => Some(FoldVal::Bool(*b)),
+        Expr::Unary { op, expr, .. } => {
+            let v = fold_const(expr)?;
+            match (op, v) {
+                (UnOp::Neg, FoldVal::I64(n)) => n.checked_neg().map(FoldVal::I64),
+                (UnOp::Neg, FoldVal::F64(f)) => Some(FoldVal::F64(-f)),
+                (UnOp::Not, FoldVal::Bool(b)) => Some(FoldVal::Bool(!b)),
+                _ => None,
+            }
+        }
+        Expr::Binary { op, lhs, rhs, .. } => fold_binary(*op, fold_const(lhs)?, fold_const(rhs)?),
+        _ => None,
+    }
+}
+
+/// O(1) 浅折叠（D-050）：只折叠「操作数都是直接字面量」的二元/一元运算，
+/// 绝不递归。compile_expr 的入口用这一版——递归版在左深二元链上每层重遍历
+/// 整棵子树（O(n²)），实测 compile fib 回退 ~40%；而折叠的真实收益面只有
+/// 字面量运算（变量参与的表达式本来就折不动），更深层的字面量链由既有
+/// `AddI64Imm` 立即数融合兜底，语义等价。
+fn fold_shallow(expr: &Expr) -> Option<FoldVal> {
+    match expr {
+        Expr::Unary { op, expr, .. } => {
+            let v = match &**expr {
+                Expr::Int(n, _) => FoldVal::I64(*n),
+                Expr::Float(f, _) => FoldVal::F64(*f),
+                Expr::Bool(b, _) => FoldVal::Bool(*b),
+                _ => return None,
+            };
+            match (op, v) {
+                (UnOp::Neg, FoldVal::I64(n)) => n.checked_neg().map(FoldVal::I64),
+                (UnOp::Neg, FoldVal::F64(f)) => Some(FoldVal::F64(-f)),
+                (UnOp::Not, FoldVal::Bool(b)) => Some(FoldVal::Bool(!b)),
+                _ => None,
+            }
+        }
+        Expr::Binary { op, lhs, rhs, .. } => {
+            let a = match **lhs {
+                Expr::Int(n, _) => FoldVal::I64(n),
+                Expr::Float(f, _) => FoldVal::F64(f),
+                Expr::Bool(b, _) => FoldVal::Bool(b),
+                _ => return None,
+            };
+            let b = match **rhs {
+                Expr::Int(n, _) => FoldVal::I64(n),
+                Expr::Float(f, _) => FoldVal::F64(f),
+                Expr::Bool(v, _) => FoldVal::Bool(v),
+                _ => return None,
+            };
+            fold_binary(*op, a, b)
+        }
+        _ => None,
+    }
+}
+
+fn fold_binary(op: BinOp, a: FoldVal, b: FoldVal) -> Option<FoldVal> {
+    match (a, b) {
+        (FoldVal::I64(x), FoldVal::I64(y)) => match op {
+            BinOp::Add => x.checked_add(y).map(FoldVal::I64),
+            BinOp::Sub => x.checked_sub(y).map(FoldVal::I64),
+            BinOp::Mul => x.checked_mul(y).map(FoldVal::I64),
+            BinOp::Div if y != 0 => x.checked_div(y).map(FoldVal::I64),
+            BinOp::Mod if y != 0 => x.checked_rem(y).map(FoldVal::I64),
+            BinOp::Eq => Some(FoldVal::Bool(x == y)),
+            BinOp::NotEq => Some(FoldVal::Bool(x != y)),
+            BinOp::Lt => Some(FoldVal::Bool(x < y)),
+            BinOp::LtEq => Some(FoldVal::Bool(x <= y)),
+            BinOp::Gt => Some(FoldVal::Bool(x > y)),
+            BinOp::GtEq => Some(FoldVal::Bool(x >= y)),
+            _ => None,
+        },
+        (FoldVal::F64(x), FoldVal::F64(y)) => match op {
+            BinOp::Add => Some(FoldVal::F64(x + y)),
+            BinOp::Sub => Some(FoldVal::F64(x - y)),
+            BinOp::Mul => Some(FoldVal::F64(x * y)),
+            // The VM rejects a zero divisor; folding that into inf/NaN would
+            // silently drop a runtime error.
+            BinOp::Div if y != 0.0 => Some(FoldVal::F64(x / y)),
+            BinOp::Mod if y != 0.0 => Some(FoldVal::F64(x % y)),
+            BinOp::Eq => Some(FoldVal::Bool(x == y)),
+            BinOp::NotEq => Some(FoldVal::Bool(x != y)),
+            BinOp::Lt => Some(FoldVal::Bool(x < y)),
+            BinOp::LtEq => Some(FoldVal::Bool(x <= y)),
+            BinOp::Gt => Some(FoldVal::Bool(x > y)),
+            BinOp::GtEq => Some(FoldVal::Bool(x >= y)),
+            _ => None,
+        },
+        (FoldVal::Bool(x), FoldVal::Bool(y)) => match op {
+            BinOp::Eq => Some(FoldVal::Bool(x == y)),
+            BinOp::NotEq => Some(FoldVal::Bool(x != y)),
+            BinOp::And => Some(FoldVal::Bool(x && y)),
+            BinOp::Or => Some(FoldVal::Bool(x || y)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Span of any expression node — used so a folded constant still points at the
+/// *whole* source expression in diagnostics, not at one of its leaves.
+fn expr_span(e: &Expr) -> Span {
+    match e {
+        Expr::Int(_, s)
+        | Expr::Float(_, s)
+        | Expr::Bool(_, s)
+        | Expr::Str(_, s)
+        | Expr::Var(_, s)
+        | Expr::Call { span: s, .. }
+        | Expr::Unary { span: s, .. }
+        | Expr::Binary { span: s, .. }
+        | Expr::IfExpr { span: s, .. }
+        | Expr::BlockExpr(_, s)
+        | Expr::Tuple(_, s)
+        | Expr::Array(_, s)
+        | Expr::Index { span: s, .. }
+        | Expr::DynIndex { span: s, .. } => *s,
+    }
+}
+
 impl<'a> Codegen<'a> {
     pub fn new(sigs: &'a SigTable, host_ids: &'a HashMap<String, u16>) -> Self {
         Self {
@@ -190,6 +344,25 @@ impl<'a> FuncCodegen<'a> {
         (r, Ty::Unit)
     }
 
+    /// Emit a folded constant into `hint` (or a fresh register). The span is
+    /// the whole folded expression's, so diagnostics never blame a sub-token.
+    fn emit_folded(&mut self, v: FoldVal, span: Span, hint: Option<Reg>) -> (Reg, Ty) {
+        let r = hint.unwrap_or_else(|| self.fresh());
+        let ty = v.ty();
+        match v {
+            FoldVal::I64(n) => {
+                self.emit(Op::ConstI64 { dst: r, val: n }, span);
+            }
+            FoldVal::F64(f) => {
+                self.emit(Op::ConstF64 { dst: r, val: f }, span);
+            }
+            FoldVal::Bool(b) => {
+                self.emit(Op::ConstBool { dst: r, val: b }, span);
+            }
+        }
+        (r, ty)
+    }
+
     /// Emit a branch taken when `cond` is false; returns the branch's index so
     /// the caller can patch its target once the destination is known.
     ///
@@ -208,17 +381,17 @@ impl<'a> FuncCodegen<'a> {
         // guard avoids compiling lhs twice for every other condition shape.
         if let Expr::Binary { op, lhs, rhs, .. } = cond {
             if is_i64_cmp(*op) {
-                if let Expr::Int(n, _) = &**rhs {
+                if let Some(FoldVal::I64(n)) = fold_const(rhs) {
                     let (lr, _) = self.compile_expr(lhs)?;
                     let fused = match op {
                         // Emit the negation: this branch is taken when cond
                         // is FALSE, matching `fuse_branch`'s convention.
-                        BinOp::Eq => Op::JmpIfNeI64Imm { a: lr, imm: *n, target: usize::MAX },
-                        BinOp::NotEq => Op::JmpIfEqI64Imm { a: lr, imm: *n, target: usize::MAX },
-                        BinOp::Lt => Op::JmpIfGeI64Imm { a: lr, imm: *n, target: usize::MAX },
-                        BinOp::LtEq => Op::JmpIfGtI64Imm { a: lr, imm: *n, target: usize::MAX },
-                        BinOp::Gt => Op::JmpIfLeI64Imm { a: lr, imm: *n, target: usize::MAX },
-                        BinOp::GtEq => Op::JmpIfLtI64Imm { a: lr, imm: *n, target: usize::MAX },
+                        BinOp::Eq => Op::JmpIfNeI64Imm { a: lr, imm: n, target: usize::MAX },
+                        BinOp::NotEq => Op::JmpIfEqI64Imm { a: lr, imm: n, target: usize::MAX },
+                        BinOp::Lt => Op::JmpIfGeI64Imm { a: lr, imm: n, target: usize::MAX },
+                        BinOp::LtEq => Op::JmpIfGtI64Imm { a: lr, imm: n, target: usize::MAX },
+                        BinOp::Gt => Op::JmpIfLeI64Imm { a: lr, imm: n, target: usize::MAX },
+                        BinOp::GtEq => Op::JmpIfLtI64Imm { a: lr, imm: n, target: usize::MAX },
                         _ => unreachable!("is_i64_cmp guard"),
                     };
                     return Ok(self.emit(fused, span));
@@ -542,6 +715,13 @@ impl<'a> FuncCodegen<'a> {
     /// before writing `dst` (`CallHost` gathers `Value`s first), so hinting a
     /// slot that is also an operand is safe.
     fn compile_expr_into(&mut self, expr: &Expr, hint: Reg) -> Result<Reg> {
+        // Constant folding runs before the shape match (shallow version —
+        // see compile_expr for the O(n²) rationale): fully-constant *shallow*
+        // operations become one Const* into the caller's slot; deeper literal
+        // chains fall back to the existing AddI64Imm fusion.
+        if let Some(v) = fold_shallow(expr) {
+            return Ok(self.emit_folded(v, expr_span(expr), Some(hint)).0);
+        }
         match expr {
             Expr::Int(n, s) => {
                 self.emit(Op::ConstI64 { dst: hint, val: *n }, *s);
@@ -584,6 +764,15 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<(Reg, Ty)> {
+        // 常量折叠只走 O(1) 浅路径（D-050）：入口处不做整树递归——左深
+        // 二元链会让 fold_const 每层重遍历整棵子树（O(n²)），实测 compile
+        // fib 回退 ~40%。浅折叠覆盖"字面量二元/一元运算"（唯一有收益的
+        // 形态）；更深层的字面量链由既有 AddI64Imm 立即数融合兜底，语义
+        // 等价。递归版 fold_const 保留给 compile_cond_false 的立即数比较
+        // （rhs 非字面量时是 O(1) 的 None 快路径）。
+        if let Some(v) = fold_shallow(expr) {
+            return Ok(self.emit_folded(v, expr_span(expr), None));
+        }
         match expr {
             Expr::Int(n, s) => {
                 let r = self.fresh();
@@ -703,6 +892,20 @@ impl<'a> FuncCodegen<'a> {
         span: Span,
         dst_hint: Option<Reg>,
     ) -> Result<(Reg, Ty)> {
+        // `2 + x` is as cheap as `x + 2`: integer addition (including its
+        // overflow check) commutes. Handle a constant left operand *before*
+        // compiling it so the literal never materialises into a register.
+        // Subtraction / division do not commute and stay on the normal path.
+        // `fold_const` also catches compound literals such as `-5` and `2+3`.
+        if op == BinOp::Add {
+            if let Some(FoldVal::I64(n)) = fold_const(lhs) {
+                let (rr, rt) = self.compile_expr(rhs)?;
+                let dst = dst_hint.unwrap_or_else(|| self.fresh());
+                self.emit(Op::AddI64Imm { dst, src: rr, imm: n }, span);
+                return Ok((dst, rt));
+            }
+        }
+
         let (lr, lt) = self.compile_expr(lhs)?;
 
         if op == BinOp::And || op == BinOp::Or {
@@ -754,10 +957,13 @@ impl<'a> FuncCodegen<'a> {
 
         // `x + 1` / `x - 1` are by far the most common integer operations
         // (counters, index walks). Folding the literal into the opcode removes
-        // a constant load and a register operand from the hot path.
+        // a constant load and a register operand from the hot path. Reading the
+        // operand through `fold_const` also catches `-5` and `2+3` (which the
+        // folder has already reduced to a single literal), without introducing
+        // any new opcode or bytecode format change.
         if matches!(op, BinOp::Add | BinOp::Sub) && !matches!(lt, Ty::F64) {
-            if let Expr::Int(n, _) = rhs {
-                let imm = if op == BinOp::Add { Some(*n) } else { n.checked_neg() };
+            if let Some(FoldVal::I64(n)) = fold_const(rhs) {
+                let imm = if op == BinOp::Add { Some(n) } else { n.checked_neg() };
                 if let Some(imm) = imm {
                     let dst = dst_hint.unwrap_or_else(|| self.fresh());
                     self.emit(Op::AddI64Imm { dst, src: lr, imm }, span);
