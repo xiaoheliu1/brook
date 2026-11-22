@@ -170,15 +170,25 @@
 | 线程本地状态 | lib.rs:684-703、fs.rs:31-37、util.rs:69-77、vision.rs:88-106 | SCRIPT_STACK/RESTRICTED/RNG/模板缓存/容差/区域/间隔 |
 | 受限写围栏 | fs.rs:40-164；JNI setRestricted | 按调用线程生效 |
 
-### 5.3 数据类型层面的硬冲突（brook 无 Map/Array）
+### 5.3 数据类型层面（数组已进语言 · ADR-018 更新）
 
 232 个重载中：**返回 Map 19 个**（device_info、current_app、ui_find_report、app_info、gps_once、trigger_json、date_parts×2、img_load/img_info、img_find、img_find_at、img_wait、img_wait_at、img_screen_size、img_color_at、img_shot、img_crop、img_stable×2）；**返回 Array ~55 个**（screen_size、wait_ui×2、wait_id×6、wait_desc×6、scroll_until×3、ui_dump、ocr_screen/region/find_text、find_text/id/desc/by、app_list、regex_capture/split、fs_list、fs_read_bytes、img_find_all/many/bind×2、img_color）；**参数收 Array 8 个**（draw_path×2、draw_polygon×2、fs_write_bytes、img_find_many、img_find_bind×2、join、rnd_pick）；嵌套结构：ui_find_report（Map 内 Array<Map>）、fs_list/ui_dump/ocr_*/app_list（Array<Map>）。
 
-脚本侧恰以 `m["key"]`（17 文件）、数组（22 文件）、for-in（15 文件）为最高频消费。展平方案（POC 已验证，见 tests/migration_so_demo.rs）：
+脚本侧恰以 `m["key"]`（17 文件）、数组（22 文件）、for-in（15 文件）为最高频消费。**ADR-018（数组进入语言）之后本节方案分层更新**：
 - 固定记录 → **N 元组**（桥接层已扩至 2-8 元，D-035）：`img_screen_size -> (w,h)`、`img_crop -> (x,y,w,h)`、`wait_ui -> (ok,x,y,w,h)`；
-- 变长记录集 → **Opaque + count + indexed getter**：`ocr_screen -> Opaque<OcrList>` + `ocr_count/ocr_text/ocr_cx/ocr_cy`；脚本侧 `for i in 0..count` 迭代；
-- Task 对象（全仓 1 文件）→ Opaque + 内部可变性（RefCell/Cell）+ 普通 setter/getter 函数。
+- 变长列表 / 记录集 → **原生数组**（v1.2 新能力）：宿主 `Vec<T>` 直接过边界（HOST_GUIDE §7.1）——`wait_id -> [(i64,i64,i64,i64)]`、`fs_list -> [(str,str,bool,i64)]`、`find_text -> [str]`；脚本侧 `for r in rows` + `r.0` 原生消费（D-045 之前的 POC 用 Opaque+getter，现在仅剩"宿主内可变状态"场景仍走 Opaque：Task 对象、BindList 这类带内部可变性的）；
+- Map（19 个固定字段记录）→ 元组（字段 ≤8 全部覆盖）；动态键查表调用点为零（ADR-018 Map 暂缓的依据）。
 
 ### 5.4 路径硬编码
 
 Rust 侧无设备路径硬编码（root 由 Kotlin `setRootPath` 注入）；JNI 符号名硬编码包名 `com.example.sodemo.NativeBridge`；设备路径硬编码只在脚本内容里（`/sdcard/abc/tools/DisplayToggle.dex` 等）。`uinput_probe` 硬编码 `/dev/uinput`（探针属性）。
+
+### 5.5 同名重载的收敛规则（brook：名字 → 唯一签名）
+
+brook 的注册表是**名字 → 唯一签名**：同名注册第二个在注册时即报错 `host function ... is already registered`（不静默覆盖、不运行时重载分派）。这是设计取舍（ADR-013）：静态类型下调用点按名字解析到固定的 `CallHost` 槽位号，签名进 sigs 表与缓存指纹——重载解析会把 typecheck / 字节码 / 指纹 / 错误栈整条链打上"按参数签名区分"的键，持久复杂度换不来自动化脚本的真实需求。**232 个重载按三条规则收敛，引擎零改动**：
+
+1. **数字重载 → 合并签名**：宿主边界有 i64→f64 隐式提升（ADR-006），签名写 `f64` 可同时接住脚本传的 `5` 与 `5.0`。适用：`wait_ui`(i64/f64)、`click_node`(+i64/+f64)、`wait_id`/`wait_desc` 的数字重载对。⚠️ 反向不成立：签名写 `i64` 接不住 `1.5`（精度语义由签名决定）。
+2. **可选参数重载 → 取超集签名**：`click_text(String)` / `click_text(String,i64)` → 注册 `click_text(String,i64)`，脚本侧少参调用点补显式默认值（迁移本就是重写，顺路改，无隐式默认值机制）。
+3. **类型族不同 → 拆名**：宿主注册名与脚本调用名一起换，风格沿用 rhai 作者自己的习惯（`img_find` / `img_find_at` / `img_find_all` / `img_find_bind` 本来就是拆开的）——如 `find_text`(String) 与 `find_text`(Array) 若同仓出现， Brook 侧注册 `find_text` / `find_text_many`。
+
+POC（tests/migration_so_demo.rs）全程"一名一签"跑通，无一例需要引擎侧改动。宿主侧迁移 checklist：注册完所有名字后跑一次全量编译，任何漏改的重载都会以 `already registered` 在**启动时**暴露（而非静默错绑）。
