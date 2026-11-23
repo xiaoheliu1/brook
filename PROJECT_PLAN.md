@@ -9,7 +9,7 @@
 > - 时间线倒序追加（新的记录放最上面）。
 
 **创建日期**：2026-11-20
-**当前状态**：阶段 3 功能全部落地（安全边界、`register_fn!` 类型化 FFI、C ABI / JNI 双 ABI 打包、`.sbc` 字节码缓存）。真机验证已于 2026-11-21 在 PLR110（Android 16 / arm64-v8a / SELinux Enforcing）完成（见 Q10 / D-032），产物已完成交叉编译 + ELF/导出符号校验。测试演进：自查修复后 64 项 → 迁移可行性验证后 65 项 → 补 `break` / `continue` 后 77 项 → 补 `/* */` 块注释与类型错误信息方向统一后 107 项 → 补诊断能力（字符列号 / 调用栈 / 源码片段渲染 / 宿主错误类型透传）后 118 项 → 补嵌套深度上限（修栈溢出崩溃）后 126 项 → 补数值内置 i64、C ABI 错误定位、线程/重载语义后 149 项（147 项单测/集成 + 2 个 doctest，另有 1 个 `ignore` 示例），release 构建通过；2026-11-21 静态审查修复两处 P1（if 表达式 else-if 深度守卫、EqHandle 对象身份语义）并解决 Q13/Q14（参考解释器对齐 VM、块值类型统一、validate 硬化），累计新增 10 项回归，**159 项全绿**（157 单测/集成 + 2 doctest + 1 ignore 示例）、release 构建零警告（shell 恢复后实测）；2026-11-21 C ABI 句柄式脚本层落地（ADR-015 / D-033）；同日解决 Q15 + fuzz 冒烟（D-034）、完成 rhai_demo/so_demo 迁移评估与 so_demo 改写 POC（D-035）；同日教程重构为纯脚本教程 + 宿主指南（D-038）、显式化 ADR-016（顶层函数式）并新增公共函数库模式（D-037）；同日 import 加固三线（D-044）；**数组进入语言（ADR-018 / D-045，Q16）**——Python 式引用语义、`for x in arr`、push/len/contains、宿主 `Vec<T>` 边界、Map 暂缓（重启条件见 ADR-018），`.sbc` VERSION 4→5（D-047 后为 7、D-049 后为 8），实测 **268 项全绿、release 零警告**、基线无回退；2026-11-21 修掉 import 引入的编译期回退（D-048）；2026-11-22 补性能回归护栏与边界测试（D-049）：`scripts/perf_check.sh` 固化 compile fib / VM fib 基线，数值边界、`.sbc` 损坏输入、import 传递依赖缓存失效三类回归入网，修 f64 `contains` 按位比较与 `Value`/`==` 语义分叉，VERSION 7→8，**276 项全绿（274 单测/集成 + 2 doctest，1 ignore）**；2026-11-22 常量折叠浅版落地（D-050，另一会话实现 + 本会话修复接入方式），**284 项全绿**
+**当前状态**：阶段 3 功能全部落地（安全边界、`register_fn!` 类型化 FFI、C ABI / JNI 双 ABI 打包、`.sbc` 字节码缓存）。真机验证已于 2026-11-21 在 PLR110（Android 16 / arm64-v8a / SELinux Enforcing）完成（见 Q10 / D-032），产物已完成交叉编译 + ELF/导出符号校验。测试演进：自查修复后 64 项 → 迁移可行性验证后 65 项 → 补 `break` / `continue` 后 77 项 → 补 `/* */` 块注释与类型错误信息方向统一后 107 项 → 补诊断能力（字符列号 / 调用栈 / 源码片段渲染 / 宿主错误类型透传）后 118 项 → 补嵌套深度上限（修栈溢出崩溃）后 126 项 → 补数值内置 i64、C ABI 错误定位、线程/重载语义后 149 项（147 项单测/集成 + 2 个 doctest，另有 1 个 `ignore` 示例），release 构建通过；2026-11-21 静态审查修复两处 P1（if 表达式 else-if 深度守卫、EqHandle 对象身份语义）并解决 Q13/Q14（参考解释器对齐 VM、块值类型统一、validate 硬化），累计新增 10 项回归，**159 项全绿**（157 单测/集成 + 2 doctest + 1 ignore 示例）、release 构建零警告（shell 恢复后实测）；2026-11-21 C ABI 句柄式脚本层落地（ADR-015 / D-033）；同日解决 Q15 + fuzz 冒烟（D-034）、完成 rhai_demo/so_demo 迁移评估与 so_demo 改写 POC（D-035）；同日教程重构为纯脚本教程 + 宿主指南（D-038）、显式化 ADR-016（顶层函数式）并新增公共函数库模式（D-037）；同日 import 加固三线（D-044）；**数组进入语言（ADR-018 / D-045，Q16）**——Python 式引用语义、`for x in arr`、push/len/contains、宿主 `Vec<T>` 边界、Map 暂缓（重启条件见 ADR-018），`.sbc` VERSION 4→5（D-047 后为 7、D-049 后为 8），实测 **268 项全绿、release 零警告**、基线无回退；2026-11-21 修掉 import 引入的编译期回退（D-048）；2026-11-22 补性能回归护栏与边界测试（D-049）：`scripts/perf_check.sh` 固化 compile fib / VM fib 基线，数值边界、`.sbc` 损坏输入、import 传递依赖缓存失效三类回归入网，修 f64 `contains` 按位比较与 `Value`/`==` 语义分叉，VERSION 7→8，**276 项全绿（274 单测/集成 + 2 doctest，1 ignore）**；2026-11-22 常量折叠浅版落地（D-050，另一会话实现 + 本会话修复接入方式），**284 项全绿**；2026-11-23 宿主取消钩子落地（D-051）：`Engine::set_cancel_hook` + VM 每 65536 步冷路径探测，`Error::is_cancelled()` 结构化识别（不改 ErrorKind / C ABI），泛型双实例把无钩子路径的探测编译期消除，**291 项全绿**、门禁 compile 1.001× / VM 1.023×
 **项目代号**：`brook`（crate 名，已落地。名字为用户昵称「小河」的英译。曾用名链：`miniscript` → `vitul` → `brook`，见 D-040 / D-043）
 
 ---
@@ -578,6 +578,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 > 倒序追加。格式：`日期 · 变更内容 · 影响范围`
 
+- **2026-11-23** · **宿主取消钩子（D-051，so_demo → brook 切换前置）**：rhai 有 `on_progress` 每 65536 步回查 `cancelled()`，纯算术死循环（`while true {}` 不调宿主函数）在 brook 侧原本只能靠 1 亿步 gas 兜底——停止按钮对这类脚本近乎无效，属发动机"开了停不下来"的安全漏洞。本轮在引擎侧补齐：`Engine::set_cancel_hook(Fn() -> bool)` 可选注入；VM 每 65536 指令走一次 `#[cold] #[inline(never)]` 探测，命中即返回带源码位置的停止错误；`Error::cancelled` / `Error::is_cancelled()` 结构化识别——**刻意不改 `ErrorKind`、不动 C ABI**，宿主可按 `is_cancelled()` 映射中文文案而非匹配字符串。**性能关键决策**：初版把 `if steps >= next_cancel_check` 直接留在 dispatch 循环里（无钩子时恒假但每步仍比较），同二进制 A/B 实测 VM fib(18) 173→201µs（**+16% 真实回退**，Criterion 判 significant）；改为 `run<const CANCEL: bool>()` 泛型双实例，按 `cancel.is_some()` 在 `call` 处分流，无钩子实例在编译期折叠掉整个探测——复测 **154.9µs**，回到基线（154.69µs）水位。门禁 compile 1.001× / VM 1.023×，无钩子路径**零开销、行为不变**；有钩子路径延迟上限 = 65536 指令（与 rhai 同间隔）。新增 `tests/cancel.rs` 7 项（纯算术死循环可停、探测分摊不逐指令、gas 仍生效、停止态每轮自动清零、调用栈可渲染、宿主函数报错整段中断、无钩子行为不变）。**291 项全绿**（284 → +7），debug/release 双通过，改动文件零 clippy 警告 · error.rs / vm.rs / engine.rs / tests/cancel.rs / PROJECT_PLAN.md
 - **2026-11-22** · **常量折叠（D-050）——另一会话实现、本会话修复接入方式**：codegen 增加字面量常量折叠（`FoldVal`/`fold_binary`，checked 溢出/零除保持运行时错误语义、f64 IEEE 值相等对齐 D-049）+ `tests/constant_folding.rs` 8 项。**卡点与修复**：初版在 `compile_expr` 入口对**每个表达式节点做整树递归折叠重试**——变量左深链上每层重遍历整棵子树（O(n²)），实测 compile fib 9.5→~14µs（**回退 ~40%**，perf 门禁 WARN 1.44×），且曾把 perf 基线整体上抬 23% 以求过线（已恢复原基线——基线门禁的用途是暴露回退，不是吸收回退）。修复：接入改 **O(1) 浅折叠**（`fold_shallow`，仅"操作数为直接字面量"的二元/一元折叠；递归版保留给 `compile_cond_false` 的立即数比较路径——非字面量是 O(1) None 快路径），深层字面量链由既有 `AddI64Imm` 立即数融合兜底（语义等价）。门禁回绿：compile_fib ratio 1.137 OK / vm_fib18 1.120 OK（原基线 9.49/154.69）。**284 项全绿**（+8：constant_folding；含浅折叠语义修正——深字面量树不再 AST 级全折的取舍钉进测试注释）· codegen.rs / tests/constant_folding.rs / scripts/perf_baseline.env（恢复）/ PROJECT_PLAN.md
 
 - **2026-11-22** · **性能护栏 + 边界回归（D-049）**：① 新增 `scripts/perf_check.sh`（`record` / `check` 两模式、`scripts/perf_baseline.env` 基线、WARN 1.35× / FAIL 1.80×），把 D-048 暴露的编译期回退纳入可重复门禁；本机基线落在 compile fib 约 10–12µs、VM fib(18) 约 156–190µs（机器噪声较大，具体值以 `scripts/perf_baseline.env` 为准；最终复测 ratio 0.888 / 0.822，均 OK）。② 新增 `tests/numeric_edges.rs` 5 项，钉死 `i64::MIN` 的 min/max、加减乘除/取模溢出与零除错误定位，以及 f64 NaN/±0 语义；实测发现 VM `ContainsTyped` 对 f64 走槽位按位比较，导致 `contains([NaN], NaN)` 为 true、`contains([-0.0], 0.0)` 为 false，与参考解释器 `Value::PartialEq` 和 `==` 分叉——改为 IEEE 值相等，并让数组/元组的结构比较不再用「同一堆下标」短路掉内部 NaN；**VERSION 7→8** 强制旧缓存重建，新增 v7 拒绝测试。③ `tests/cache.rs` 增确定性变异扫描（截断前缀 + 256 轮固定 LCG 位翻转 + 随机载荷），解码永不 panic。④ `tests/import_stmt.rs` 增传递依赖缓存失效测试：主脚本 → net.bk → codec.bk，叶子文件变更或缺席时 `load_cached` / `reload_cached` 必须重建/报错，不能服役旧 `.sbc`。新增 8 项回归 · engine 缓存版本 / vm.rs / tests/numeric_edges.rs / tests/cache.rs / tests/import_stmt.rs / scripts/perf_check.sh / scripts/perf_baseline.env / PROJECT_PLAN.md
@@ -991,6 +992,58 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - rhai_demo：**可接住但为宿主 API v2 工程**。~110 个标量函数直接接住；Task/Page 句柄天然映射 Opaque；~67 个 Map/Array 返回 + exec(Map 入参) 需重设计；253 个 try/catch 与 34 个脚本（6905 行）全部重写；diag.rhai 留作最后回归网；两处隐蔽语义点（字符串原地改、max_operations 长挂假设）。
 
 **验证**：177 项全绿（175 单测/集成 + 2 doctest）、零警告。
+
+---
+
+### 2026-11-23 · 迁移真机验证：发现 tap 注册缺口（D-036）
+
+**背景**：手机连接（PLR110 / arm64-v8a）后跑 brookDebug 真机验证。脚本经 `brook_verify_device.sh` push（.bk 改名 .rhai 绕 TaskStore 扫描限制）。
+
+**结果分层**：
+- ✅ `phone_hello`：完整通过，日志/循环/字符串拼接全部符合预期。
+- ✅ `perf_run_script`：跑完 600 次 run_script + 纯计算对照（2ms），无报错；批次汇总被 logcat 环形缓冲冲掉，非脚本问题。
+- ❌ `找图`：`t.png` 模板文件不存在（宿主 img_find 抛的），非引擎 bug；需 push 模板或改脚本目标。
+- ❌ `live_hit`：App 日志页明确 `脚本错误: undefined function 'tap'`——真机注册缺口。
+
+**根因（D-036）**：`tap` 只在 rhai 引擎注册（lib.rs:889），brook 的 `register_device_brook` 漏了它；而编译门 `brook_scripts.rs` 的 stub 里补了 tap 签名，所以"23 脚本编译全过"但真机运行 undefined。这是**编译门 stub 与真机注册不一致**的盲点——stub 给了脚本不该有的假设。
+
+**全量盘点**：脚本调用 ∩ 真机注册差集 = 仅 `tap`（`live_hit.bk` / `live_img_hit.bk`）。`img_find/img_has/img_tol` 在 vision 族已注册；`toast/root` 在 compat 已注册；`display_off/display_on/stamp` 是脚本内自定义函数。`ms` 是日志字符串误报。
+
+**修复**：在 `register_device_brook` 补 `tap`（+对等的 `root_tap`），复用现成 `call_ii_bool` 辅助；重编 so → 重打 APK → 重装 → 重跑 live_hit 验证。
+
+**修复落地与复验（同日 13:46）**：在 `register_device_brook` 末尾补 `tap`/`root_tap`（复用 `call_ii_bool`，与 rhai 版逐字对齐）→ `cargo build --release --target aarch64-linux-android`（2m07s）→ 拷两个 so → `assembleBrookDebug`（32s）→ `install -r`（脚本数据保留）→ 复验：
+- ✅ `live_hit`：从"运行失败"变为正常完成。日志：`=== 真命中闭环 find_text -> tap ===` / `PhaseB is_cancelled = false` / 走到"闭环结论"分支。`tap` 不再 undefined；因设备无障碍未开没找到"导入"目标，返回"没找到"分支（权限预期）。
+- ✅ `display_toggle`：正常完成。`root()` 调用链通（返回"root 总闸未开启"提示）→ `display_off() 回 false` → "灭没成功"分支 → 脚本执行完成。root 族注册正常（权限预期）。
+
+**真机验证结论（D-036 收尾）**：4 类脚本全部跑通——`phone_hello`（日志/循环）、`perf_run_script`（嵌套 run_script ×600 + 纯计算）、`live_hit`（宿主函数 tap/find_text/is_cancelled + 本次注册修复）、`display_toggle`（root 族 + 自定义函数）。`找图` 失败因 `t.png` 模板文件未 push（数据缺失，非引擎问题）。brook 引擎在真机 arm64 上注册链、执行链、停止钩子、嵌套调用均验证通过。
+
+**结构性改进项 · 方案 B 已落地（同日 13:56）**：新增 `native/tests/host_fn_coverage.rs`（2 项测试），静态扫描真机 `register_fn!` 注册名 vs 脚本调用名做差集，内置函数走 `brook::typecheck::is_builtin`（单一来源，零维护）、脚本内 `func` 自定义函数排除，缺口非空即 fail 并打印「缺口函数 <- 引用脚本」。与 `brook_scripts.rs`（保证签名用对）互补：本测试保证「函数存在」。
+
+- **反向验证**：临时注释掉 tap 注册 → 测试精确失败并报 `tap <- live_hit.bk, live_img_hit.bk`，随后恢复 → 全绿。这是测试可信度的关键证明。
+- **过程中发现并修复扫描器自身缺陷**：初版直接对源码做正则，`//` 注释掉的注册仍被算作已注册（反向验证当场暴露）；补 `strip_rust_comments`（处理行/块/raw 注释且保留字符串内容）后修正。
+- **验证**：native 全量 `cargo test` 114 单测 + 1 编译门 + 2 覆盖测试全绿。
+- **方案 A（治本，未做）**：把 `register_fn!` 全部改写成共享签名清单宏，真机接真实实现、测试造桩，从结构上杜绝错位。改造 87+ 处，待注册体系重构时再做。
+
+---
+
+### 2026-11-23 · 迁移闭环：App 原生支持 .bk（D-036 收尾）
+
+**背景**：真机验证时 `.bk` 靠 push 改名 `.rhai` 绕过 TaskStore 扫描，App 自身不认 `.bk`——最后一块没闭环。
+
+**关键发现**：执行路径与后缀完全解耦——JNI 三个入口（runScript/runScriptTimes/runScriptArgs）全走 `run_brook`，`name` 参数只作日志标签。所以改造纯粹是 Kotlin 侧"把 .bk 当一等脚本后缀"，不碰引擎。
+
+**改动（提交 `e3c5a87`）**：新建 `ScriptFiles.kt` 作后缀规则单一来源（`EXTENSIONS`/`isScriptFile`/`stripExt`/`withDefaultExt`/`withOriginalExt`/`listScripts`），替换散落 6+ 处硬编码：
+- `TaskStore`：scanScripts/sanitizeBaseName/createScript/renameScript/duplicateScript/findByName（findByName 不带后缀时两种扩展名都试）
+- `TasksFragment` 显示、`EditorFragment` 运行名/草稿唯一名、`FloatButtonService` 扫描/选择器
+- `HttpServerService`：kind=trigger 上传禁入与删前快照改判 `isScriptFile`——**否则传 .bk 可绕过提权链保护**（安全修复）
+- `scripts/brook/perf_run_script.bk`：子脚本名 `.rhai`→`.bk`
+- `brook_verify_device.sh`：移除改名 hack，push 保留真实 `.bk`
+
+**过程中修复的回归**：① createScript 初版 sanitize 剥后缀后再补默认后缀，导致复制 .bk 得到 `.rhai`——改为 sanitize 只消毒、createScript 从消毒后入参提取后缀意图；② scanScripts 在无文件时提前 return 跳过 pruneTextCache，破坏"外部删光脚本→同名重建读新内容"契约——改为先 prune 再 return。两条都由 TaskStoreWriteTest 当场抓到。
+
+**验证**：JVM 单测 245 项全绿（含 5 项新增 .bk 覆盖）；native 编译门 + 宿主函数覆盖测试全绿；真机：清空旧 .rhai→push 5 个真 `.bk`（保留扩展名）→装新 APK→列表 5 个脚本全部识别显示；跑 `phone_hello.bk` 日志标签 `[phone_hello.bk]` 完整通过；`perf_run_script.bk` 的 600 次 `run_script("perf_child.bk")` 全部 OK。
+
+**迁移状态：闭环完成**。引擎/脚本/注册/真机/App 端后缀全通。剩余非阻塞项：14 个探针脚本 + 2 个自检脚本（smoke_ported/bind_verify）按约定保留 rhai；rhai 引擎代码在 so 里并行保留（回滚余地）；触发器引用体系的 `.bk` 依赖归一口径未扩展（现只影响 HTTP push 保护链，`.bk` 脚本作触发器依赖属另一个话题）。
 
 ---
 

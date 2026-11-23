@@ -159,7 +159,16 @@ pub struct Vm<'a> {
     /// `len(4MiB 串)` 循环 1000 万轮只烧 4000 万步，宿主线程实际扫了
     /// 10^13 个字符。计费单位在指令内累积、由 run 循环顶部折叠进 steps。
     pending: u64,
+    /// Optional host "should I stop?" callback. `None` keeps the old hot loop
+    /// byte-for-byte: no callback, no branch, no extra work per instruction.
+    cancel: Option<std::rc::Rc<dyn Fn() -> bool>>,
 }
+
+/// How many instructions between two cancellation probes. Matches the legacy
+/// rhai host's `PROGRESS_CHECK_EVERY` so the user-visible stop latency is
+/// unchanged after the engine swap. A native callback every step would make
+/// normal scripts unusable (JNI round-trip per instruction).
+const CANCEL_CHECK_EVERY: u64 = 65_536;
 
 impl<'a> Vm<'a> {
     pub fn new(
@@ -168,6 +177,18 @@ impl<'a> Vm<'a> {
         max_steps: u64,
         max_depth: usize,
         max_heap: u64,
+    ) -> Self {
+        Self::with_cancel(program, host, max_steps, max_depth, max_heap, None)
+    }
+
+    /// Same as [`Vm::new`] with a host cancellation hook attached.
+    pub fn with_cancel(
+        program: &'a Program,
+        host: &'a HostRegistry,
+        max_steps: u64,
+        max_depth: usize,
+        max_heap: u64,
+        cancel: Option<std::rc::Rc<dyn Fn() -> bool>>,
     ) -> Self {
         // Pre-intern all string constants so ConstStr never allocates.
         let heap = program.strings.iter().map(|s| HeapObj::Str(Rc::clone(s))).collect();
@@ -182,6 +203,7 @@ impl<'a> Vm<'a> {
             heap_bytes: 0,
             max_heap,
             pending: 0,
+            cancel,
         }
     }
 
@@ -266,7 +288,11 @@ impl<'a> Vm<'a> {
         }
         self.frames.push(Frame { func, base: 0, ip: 0, ret_to: 0, nregs });
 
-        let result = match self.run() {
+        // Monomorphise the dispatch loop into two copies: with and without
+        // cancellation. The no-hook copy has the probe compiled out entirely
+        // (measured: leaving even one always-false u64 compare in the loop
+        // cost ~16% on fib(18)). `run` below is written once as a generic.
+        let result = match if self.cancel.is_some() { self.run::<true>() } else { self.run::<false>() } {
             Ok(slot) => slot,
             // The frame stack is still intact here: `run` returns before any
             // unwinding. Walking it costs nothing on the successful path,
@@ -306,14 +332,45 @@ impl<'a> Vm<'a> {
         trace
     }
 
+    /// Cancellation probe, reached once every [`CANCEL_CHECK_EVERY`] steps.
+    ///
+    /// `#[cold]` + `#[inline(never)]` is deliberate: the closure call and the
+    /// error construction must stay out of the dispatch loop's straight-line
+    /// code. The previous parser-depth guard regressed compile time 15% just
+    /// by putting a `format!` in a hot helper; same lesson applied here.
+    #[cold]
+    #[inline(never)]
+    fn poll_cancel(
+        cancel: &Option<Rc<dyn Fn() -> bool>>,
+        next: &mut u64,
+        steps: u64,
+        span: Span,
+    ) -> Result<()> {
+        *next = steps.saturating_add(CANCEL_CHECK_EVERY);
+        if let Some(cb) = cancel {
+            if cb() {
+                return Err(Error::cancelled(span));
+            }
+        }
+        Ok(())
+    }
+
     /// The dispatch loop. Frames are pushed/popped by CallScript/Ret.
-    fn run(&mut self) -> Result<Slot> {
+    ///
+    /// `CANCEL` is a compile-time switch: `false` folds the probe away so the
+    /// no-hook build has byte-identical hot-loop code to the pre-hook engine.
+    fn run<const CANCEL: bool>(&mut self) -> Result<Slot> {
         // `program` is a shared reference with lifetime `'a`; copying it out of
         // `self` means the code slice below does not borrow the VM, so the loop
         // body can freely mutate registers, the heap and the frame stack.
         let program: &'a Program = self.program;
         let max_steps = self.max_steps;
         let max_depth = self.max_depth;
+        // Clone the Rc once per call so the loop body never borrows `self`
+        // immutably while mutating registers. When CANCEL is false the
+        // compiler drops both this and the probe below as dead code.
+        let cancel = if CANCEL { self.cancel.clone() } else { None };
+        let mut next_cancel_check = CANCEL_CHECK_EVERY;
 
         let mut fi = self.frames.len() - 1;
         let mut base = self.frames[fi].base;
@@ -333,6 +390,9 @@ impl<'a> Vm<'a> {
             steps += 1;
             if steps > max_steps {
                 return Err(err_at("step (gas) limit exceeded", instr.span()));
+            }
+            if CANCEL && steps >= next_cancel_check {
+                Self::poll_cancel(&cancel, &mut next_cancel_check, steps, instr.span())?;
             }
 
             match instr.op {

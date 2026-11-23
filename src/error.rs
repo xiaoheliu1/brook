@@ -12,6 +12,11 @@ pub enum ErrorKind {
     Io,
 }
 
+/// Message used by the host-cancellation error. Kept as a named constant so
+/// hosts can recognise a stop without hard-coding a translated string: use
+/// [`Error::is_cancelled`], which compares against this value.
+pub const CANCELLED_MESSAGE: &str = "script stopped by host";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
     pub kind: ErrorKind,
@@ -61,6 +66,21 @@ impl Error {
 
     pub fn io(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Io, message, None)
+    }
+
+    /// A run aborted because the host's cancellation hook returned `true`.
+    ///
+    /// Deliberately stays a `Runtime` error: the C ABI maps that kind to
+    /// `MS_ERR_RUNTIME` and `Display` keeps the `[runtime]` prefix, so no
+    /// existing caller needs updating. Hosts distinguish a stop from other
+    /// runtime failures with [`Error::is_cancelled`], never by string match.
+    pub fn cancelled(span: Span) -> Self {
+        Self::new(ErrorKind::Runtime, CANCELLED_MESSAGE, Some(span))
+    }
+
+    /// True when this error was produced by the cancellation hook.
+    pub fn is_cancelled(&self) -> bool {
+        self.kind == ErrorKind::Runtime && self.message == CANCELLED_MESSAGE
     }
 
     /// Attach a call stack (outermost frame first). Builder form so the VM can

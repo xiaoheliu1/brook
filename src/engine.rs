@@ -214,6 +214,11 @@ pub struct Engine {
     /// 约定式 import 的自定义解析器——设置时优先于 `import_dir`，
     /// 宿主决定 `import "名字"` 的源码内容（assets / DB / 内置字符串）。
     import_resolver: Option<Rc<dyn Fn(&str) -> std::result::Result<String, Error>>>,
+    /// Optional "should this run be stopped?" hook, polled every 65536
+    /// instructions. The host's callback reads its own cancel flag (a JNI
+    /// call on Android); the engine never owns cancellation state, so a new
+    /// run starts clean without any reset API.
+    cancel_hook: Option<Rc<dyn Fn() -> bool>>,
 }
 
 impl Engine {
@@ -227,6 +232,7 @@ impl Engine {
             type_names: std::collections::HashSet::new(),
             import_dir: None,
             import_resolver: None,
+            cancel_hook: None,
         }
     }
 
@@ -317,6 +323,25 @@ impl Engine {
         F: Fn(&str) -> std::result::Result<String, Error> + 'static,
     {
         self.import_resolver = Some(std::rc::Rc::new(f));
+        self
+    }
+
+    /// Install a cancellation hook. Every 65536 instructions the VM calls
+    /// `f`; returning `true` aborts the run with an [`Error`] whose
+    /// [`Error::is_cancelled`] is `true` (and a source span at the stop point).
+    ///
+    /// No hook by default: the VM's check is unreachable and costs nothing.
+    /// Call `set_cancel_hook` again to replace it. Cancellation is per-run —
+    /// the callback is polled from a fresh VM on every [`Engine::call`], so
+    /// there is no "already stopped" state to clear between runs.
+    ///
+    /// The callback runs on the script thread. Keep it cheap: on Android it
+    /// is a single JNI read of the current run's flag, not user code.
+    pub fn set_cancel_hook<F>(mut self, f: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.cancel_hook = Some(Rc::new(f));
         self
     }
 
@@ -521,12 +546,13 @@ impl Engine {
         // engine API — see PROJECT_PLAN.md, "安全边界". Note it requires the
         // default `panic = "unwind"` strategy; with `panic = "abort"` the
         // process aborts instead (documented in Cargo.toml).
-        let mut vm = Vm::new(
+        let mut vm = Vm::with_cancel(
             &script.code,
             &self.host,
             self.max_steps,
             self.max_depth,
             self.max_heap,
+            self.cancel_hook.clone(),
         );
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.call(func, coerced))) {
             Ok(result) => result,
