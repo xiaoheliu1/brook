@@ -1024,7 +1024,18 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - **反向验证**：临时注释掉 tap 注册 → 测试精确失败并报 `tap <- live_hit.bk, live_img_hit.bk`，随后恢复 → 全绿。这是测试可信度的关键证明。
 - **过程中发现并修复扫描器自身缺陷**：初版直接对源码做正则，`//` 注释掉的注册仍被算作已注册（反向验证当场暴露）；补 `strip_rust_comments`（处理行/块/raw 注释且保留字符串内容）后修正。
 - **验证**：native 全量 `cargo test` 114 单测 + 1 编译门 + 2 覆盖测试全绿。
-- **方案 A（治本，未做）**：把 `register_fn!` 全部改写成共享签名清单宏，真机接真实实现、测试造桩，从结构上杜绝错位。改造 87+ 处，待注册体系重构时再做。
+- **方案 A（治本，已实施 D-055）**：把 toolkit 族的 `register_fn!` 签名从手工 stub 改为真机 `register_brook` 直调，从结构上杜绝编译门与真机签名漂移。lib.rs 设备族 / brook_host compat/ocr_draw 依赖 JNI host 仍保留手工 stub，但 host_fn_coverage 正则扫描器兜底"真机有、stub 没"。
+
+### 2026-11-23 · 编译门签名与真机唯一同源（D-055 · 方案 A 架构优化）
+
+**改造范围**：android_so_demo 3 文件，+82/−37
+- `brook_scripts.rs stub_engine`：手工 stub 从 35 → 26，toolkit 族 77 个签名直接调真机 `register_brook`（util/path/task 自包含，vision/fs 造 DummySource/dummy root）
+- `lib.rs`：`mod toolkit` → `pub mod toolkit`，集成测试可访问
+- `vision.rs`：`shot/crop/stable/window_rect/watch_box/find/...` 等返回 VMap 的辅助函数从 `pub fn` → `pub(crate) fn`，仅 `register_brook` 保持 `pub`
+
+**验证**：115 单测 + 1 编译门 + 2 覆盖门全绿；clippy `-D warnings` 零警告；fmt 通过。arm64 release 构建无影响（vision 的 pub(crate) 降级在 lib.rs 真机调用场景仍可访问）。
+
+**收益**：brook_scripts.rs 编译门签名从手工复制改为真机注册自动同步——新增 util/vision 函数签名改动不会出现"真机改了、stub 忘了改"的漂移。
 
 ---
 
