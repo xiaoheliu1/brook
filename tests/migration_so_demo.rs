@@ -66,7 +66,7 @@ fn build_engine(logs: &Logs, root_gate: Rc<Cell<bool>>) -> Engine {
 
     // ---- 标量面（签名与 so_demo 一致）----
     let sink = log_sink(logs);
-    register_fn!(engine, "log", (String), move |s| sink(s)).unwrap();
+    register_fn!(engine, "log", (String), sink).unwrap();
     register_fn!(engine, "set_wifi", (bool) -> String, move |_on| {
         if root_gate.get() { "ok".to_string() } else { "无 root".to_string() }
     })
@@ -95,35 +95,37 @@ fn build_engine(logs: &Logs, root_gate: Rc<Cell<bool>>) -> Engine {
 
     // 抛错版（对应 rhai 的 Result → 可 throw）： happy path 用。
     register_fn!(engine, "img_find_bind",
-        (String, String, i64, i64, i64) -> Result<Opaque<BindList>, Error>,
-        |main, companion, dx, dy, win| {
-            if win < 0 {
-                return Err(Error::runtime(format!("invalid window: {}", win)));
-            }
-            let mut hits = Vec::new();
-            if dx.abs() < 2000 && dy.abs() < 2000 {
-                hits.push(BindHit { name: main, x: 100, y: 575 });
-                hits.push(BindHit { name: companion, x: 100 + dx, y: 575 + dy });
-            }
-            Ok(Opaque::new(BindList { hits }))
-        })
+    (String, String, i64, i64, i64) -> Result<Opaque<BindList>, Error>,
+    |main, companion, dx, dy, win| {
+        if win < 0 {
+            return Err(Error::runtime(format!("invalid window: {}", win)));
+        }
+        let mut hits = Vec::new();
+        if dx.abs() < 2000 && dy.abs() < 2000 {
+            hits.push(BindHit { name: main, x: 100, y: 575 });
+            hits.push(BindHit { name: companion, x: 100 + dx, y: 575 + dy });
+        }
+        Ok(Opaque::new(BindList { hits }))
+    })
     .unwrap();
     // 预期失败探针（对应 rhai 的 try/catch）：不抛错，(ok, err) 二元组。
     register_fn!(engine, "bind_win_probe",
-        (String, String, i64, i64, i64) -> (bool, String),
-        |main, companion, dx, dy, win| {
-            let _ = (&main, &companion, &dx, &dy);
-            if win < 0 {
-                (false, format!("invalid window: {}", win))
-            } else {
-                (true, String::new())
-            }
-        })
+    (String, String, i64, i64, i64) -> (bool, String),
+    |main, companion, dx, dy, win| {
+        let _ = (&main, &companion, &dx, &dy);
+        if win < 0 {
+            (false, format!("invalid window: {}", win))
+        } else {
+            (true, String::new())
+        }
+    })
     .unwrap();
     register_fn!(engine, "bind_count", (Opaque<BindList>) -> i64, |l| l.hits.len() as i64).unwrap();
     register_fn!(engine, "bind_name", (Opaque<BindList>, i64) -> String, |l, i| l.hits[i as usize].name.clone()).unwrap();
-    register_fn!(engine, "bind_x", (Opaque<BindList>, i64) -> i64, |l, i| l.hits[i as usize].x).unwrap();
-    register_fn!(engine, "bind_y", (Opaque<BindList>, i64) -> i64, |l, i| l.hits[i as usize].y).unwrap();
+    register_fn!(engine, "bind_x", (Opaque<BindList>, i64) -> i64, |l, i| l.hits[i as usize].x)
+        .unwrap();
+    register_fn!(engine, "bind_y", (Opaque<BindList>, i64) -> i64, |l, i| l.hits[i as usize].y)
+        .unwrap();
 
     // ---- Task 句柄（rhai 的 &mut Task 方法调用 → Opaque + 内部可变性）----
     register_fn!(engine, "new_task", (String) -> Opaque<Task>, |t| {
@@ -140,8 +142,12 @@ fn build_engine(logs: &Logs, root_gate: Rc<Cell<bool>>) -> Engine {
         t.errors.borrow_mut().push(msg)
     })
     .unwrap();
-    register_fn!(engine, "task_set_title", (Opaque<Task>, String), |t, s| *t.title.borrow_mut() = s).unwrap();
-    register_fn!(engine, "task_title", (Opaque<Task>) -> String, |t| t.title.borrow().clone()).unwrap();
+    register_fn!(engine, "task_set_title", (Opaque<Task>, String), |t, s| {
+        *t.title.borrow_mut() = s
+    })
+    .unwrap();
+    register_fn!(engine, "task_title", (Opaque<Task>) -> String, |t| t.title.borrow().clone())
+        .unwrap();
     register_fn!(engine, "task_steps", (Opaque<Task>) -> i64, |t| t.steps.get()).unwrap();
     register_fn!(engine, "task_summary", (Opaque<Task>) -> String, |t| format!(
         "{}: {} 步 {} 错",
@@ -205,9 +211,7 @@ fn t_wifi_scalar_surface_with_ok_err_contract() {
     assert_eq!(last_log(&logs2), "set_wifi(true) -> 无 root");
 
     // 编译失败 → ERR 前缀（rhai 的编译错走同一通道）
-    let err = engine
-        .load_str("func main() { let x = }\n}")
-        .unwrap_err();
+    let err = engine.load_str("func main() { let x = }\n}").unwrap_err();
     let report = format!("ERR\t{}", err);
     assert!(report.starts_with("ERR\t"), "{}", report);
 
@@ -293,7 +297,10 @@ fn bind_verify_ported_with_tuples_and_opaque_collections() {
         "BIND 反例(远偏移) 个数=0 (期望 0)".to_string(),
         "BIND win<0 如期报错: invalid window: -1".to_string(),
     ];
-    assert_eq!(got, expect, "ported bind_verify must produce identical log flow");
+    assert_eq!(
+        got, expect,
+        "ported bind_verify must produce identical log flow"
+    );
 }
 
 // ---- 端口 3：Task 句柄（rhai 的 &mut Task 方法 → Opaque + 内部可变性）----
@@ -419,15 +426,15 @@ fn run_plugin_map_flattens_to_params_and_json_passthrough() {
     register_fn!(engine, "log", (String), move |s| sink.borrow_mut().push(s)).unwrap();
 
     register_fn!(engine, "run_plugin",
-        (String, String, String, String) -> Result<(i64, String, String), Error>,
-        |exe, script, args, json_input| {
-            // mock：插件崩溃通道走 Err（rhai 侧 try/catch 的对应物）
-            if args.contains("--boom") {
-                return Err(Error::runtime("plugin crashed"));
-            }
-            let _ = (exe, script);
-            Ok((0, format!("echoed {}", json_input), String::new()))
-        })
+    (String, String, String, String) -> Result<(i64, String, String), Error>,
+    |exe, script, args, json_input| {
+        // mock：插件崩溃通道走 Err（rhai 侧 try/catch 的对应物）
+        if args.contains("--boom") {
+            return Err(Error::runtime("plugin crashed"));
+        }
+        let _ = (exe, script);
+        Ok((0, format!("echoed {}", json_input), String::new()))
+    })
     .unwrap();
 
     let script = engine.load_str(PLUGIN_POC).unwrap();
@@ -438,7 +445,9 @@ fn run_plugin_map_flattens_to_params_and_json_passthrough() {
     );
 
     // 插件崩溃 → Err → engine.call 失败（宿主组装 ERR\t 报告）
-    let crash = engine.load_str("func main() { run_plugin(\"p\", \"s\", \"--boom\", \"{}\") }").unwrap();
+    let crash = engine
+        .load_str("func main() { run_plugin(\"p\", \"s\", \"--boom\", \"{}\") }")
+        .unwrap();
     let err = engine.call(&crash, "main", vec![]).unwrap_err();
     assert!(err.message.contains("plugin crashed"), "{}", err.message);
 }
@@ -462,8 +471,7 @@ fn cross_script_call_via_host_function() {
     // 绑定编译时的宿主指纹，注册表后来发生变化（新增 call_script）
     // 的旧脚本会被 Engine::call 拒绝——真实部署「先注册齐宿主函数、
     // 再编译脚本」的顺序在这里被测试结构如实反映。
-    let cache: Rc<RefCell<HashMap<String, brook::Script>>> =
-        Rc::new(RefCell::new(HashMap::new()));
+    let cache: Rc<RefCell<HashMap<String, brook::Script>>> = Rc::new(RefCell::new(HashMap::new()));
     // 递归检测的名字栈（对应 so_demo 的 SCRIPT_STACK）
     let stack: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -522,9 +530,7 @@ fn cross_script_call_via_host_function() {
         .borrow()
         .load_str("func self_call(n) { call_script(\"self.bk\", \"self_call\") }")
         .unwrap();
-    cache
-        .borrow_mut()
-        .insert("self.bk".into(), script_self);
+    cache.borrow_mut().insert("self.bk".into(), script_self);
     let caller = engine
         .borrow()
         .load_str("func main() { call_script(\"self.bk\", \"self_call\") }")
@@ -537,7 +543,10 @@ fn cross_script_call_via_host_function() {
     // 变体（call_script_s / call_script_is / … 组合爆炸）。这就是为什么
     // call_script 适合任务编排（粗粒度、字符串进出），而函数库（细粒度、
     // 强类型、任意签名）应该用宿主拼接——拼接下签名编译期检查、类型自由。
-    let script_str = engine.borrow().load_str("func name(n) { \"文本\" }").unwrap();
+    let script_str = engine
+        .borrow()
+        .load_str("func name(n) { \"文本\" }")
+        .unwrap();
     cache.borrow_mut().insert("str.bk".into(), script_str);
     let caller = engine
         .borrow()
@@ -559,7 +568,8 @@ fn host_tuples_of_arity_2_to_8_roundtrip() {
     register_fn!(engine, "t3", () -> (i64, String, bool), || (1, "a".into(), true)).unwrap();
     register_fn!(engine, "t5", () -> (i64, i64, i64, i64, i64), || (1, 2, 3, 4, 5)).unwrap();
     register_fn!(engine, "t8", () -> (i64, i64, i64, i64, i64, i64, i64, i64),
-        || (1, 2, 3, 4, 5, 6, 7, 8)).unwrap();
+        || (1, 2, 3, 4, 5, 6, 7, 8))
+    .unwrap();
     register_fn!(engine, "sum3", ((i64, i64, i64)) -> i64, |t| t.0 + t.1 + t.2).unwrap();
 
     // N 元组作为宿主返回值 + 脚本侧 .N 索引 + 元组既可作宿主参数（((i64,i64,i64))
@@ -580,9 +590,7 @@ fn host_tuples_of_arity_2_to_8_roundtrip() {
     );
 
     // 元组实参跨边界（FromValue 方向）
-    let script = engine
-        .load_str("func go(t) { t.0 + t.1 + t.2 }")
-        .unwrap();
+    let script = engine.load_str("func go(t) { t.0 + t.1 + t.2 }").unwrap();
     let r = engine
         .call(
             &script,

@@ -15,7 +15,10 @@ fn typed_scalar_signature_flows_through_typechecker() -> brook::Result<()> {
     register_fn!(engine, "scale", (i64, f64) -> f64, |n, k| n as f64 * k)?;
 
     let script = engine.load_str("func go(n) { scale(n, 1.5) }")?;
-    assert_eq!(engine.call(&script, "go", vec![Value::I64(4)])?, Value::F64(6.0));
+    assert_eq!(
+        engine.call(&script, "go", vec![Value::I64(4)])?,
+        Value::F64(6.0)
+    );
 
     // The i64 parameter is not coercible from a string: the signature came
     // from Rust types, so the mismatch is a compile error, not a runtime bug.
@@ -40,7 +43,10 @@ fn short_form_infers_return_type_and_zero_args() -> brook::Result<()> {
 #[test]
 fn opaque_handle_replaces_manual_signature() -> brook::Result<()> {
     #[derive(Debug)]
-    struct Order { total: f64, vip: bool }
+    struct Order {
+        total: f64,
+        vip: bool,
+    }
 
     let mut engine = Engine::new();
     register_fn!(engine, "order_total", (Opaque<Order>) -> f64, |o| o.total)?;
@@ -48,7 +54,10 @@ fn opaque_handle_replaces_manual_signature() -> brook::Result<()> {
     engine.register_type::<Order>()?;
 
     let script = engine.load_file("examples/risk.bk")?;
-    let order = Value::from(Opaque::new(Order { total: 200.0, vip: true }));
+    let order = Value::from(Opaque::new(Order {
+        total: 200.0,
+        vip: true,
+    }));
     assert_eq!(
         engine.call(&script, "check", vec![order, Value::F64(1000.0)])?,
         Value::Tuple(vec![Value::F64(160.0), Value::Bool(true)])
@@ -81,8 +90,14 @@ fn strings_tuples_and_str_literal_results() -> brook::Result<()> {
         func go(a, b) { sum_pair((a, b)) }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "tag", vec![Value::from("x")])?, Value::from("[x]"));
-    assert_eq!(engine.call(&script, "hi", vec![Value::from("x")])?, Value::from("hello"));
+    assert_eq!(
+        engine.call(&script, "tag", vec![Value::from("x")])?,
+        Value::from("[x]")
+    );
+    assert_eq!(
+        engine.call(&script, "hi", vec![Value::from("x")])?,
+        Value::from("hello")
+    );
     assert_eq!(
         engine.call(&script, "go", vec![Value::I64(3), Value::I64(4)])?,
         Value::I64(7)
@@ -98,10 +113,19 @@ fn fallible_host_result_is_propagated() -> brook::Result<()> {
     })?;
     let script = engine.load_str("func go(x) { recip(x) }")?;
 
-    assert_eq!(engine.call(&script, "go", vec![Value::F64(4.0)])?, Value::F64(0.25));
-    let err = engine.call(&script, "go", vec![Value::F64(0.0)]).unwrap_err();
+    assert_eq!(
+        engine.call(&script, "go", vec![Value::F64(4.0)])?,
+        Value::F64(0.25)
+    );
+    let err = engine
+        .call(&script, "go", vec![Value::F64(0.0)])
+        .unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Runtime);
-    assert!(err.message.contains("division by zero in host"), "got: {}", err.message);
+    assert!(
+        err.message.contains("division by zero in host"),
+        "got: {}",
+        err.message
+    );
     Ok(())
 }
 
@@ -111,7 +135,11 @@ fn duplicate_host_registration_is_rejected() -> brook::Result<()> {
     register_fn!(engine, "same", (), || 1i64)?;
     let err = register_fn!(engine, "same", (), || 2i64).unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Runtime);
-    assert!(err.message.contains("already registered"), "got: {}", err.message);
+    assert!(
+        err.message.contains("already registered"),
+        "got: {}",
+        err.message
+    );
     Ok(())
 }
 

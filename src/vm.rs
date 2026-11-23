@@ -85,12 +85,12 @@ const HEAP_OBJ_OVERHEAD: u64 = std::mem::size_of::<HeapObj>() as u64;
 /// Indexing is the hottest operation in the dispatch loop, so `Index`/`IndexMut`
 /// skip the bounds check. Safety relies on two invariants established outside
 /// this type:
-///   * `validate` (run at program construction) guarantees every `Reg` in an
+///   - `validate` (run at program construction) guarantees every `Reg` in an
 ///     instruction is `< nregs` for the function that owns it;
-///   * `Vm::call` / `CallScript` resize the file so `base + nregs <= len()` for
+///   - `Vm::call` / `CallScript` resize the file so `base + nregs <= len()` for
 ///     the active frame before its first instruction executes.
-/// A `debug_assert` makes any violation of those invariants loud in debug
-/// builds; in release it compiles away to a plain unchecked load/store.
+///     A `debug_assert` makes any violation of those invariants loud in debug
+///     builds; in release it compiles away to a plain unchecked load/store.
 struct RegFile(Vec<Slot>);
 
 impl std::ops::Index<usize> for RegFile {
@@ -191,7 +191,11 @@ impl<'a> Vm<'a> {
         cancel: Option<std::rc::Rc<dyn Fn() -> bool>>,
     ) -> Self {
         // Pre-intern all string constants so ConstStr never allocates.
-        let heap = program.strings.iter().map(|s| HeapObj::Str(Rc::clone(s))).collect();
+        let heap = program
+            .strings
+            .iter()
+            .map(|s| HeapObj::Str(Rc::clone(s)))
+            .collect();
         Self {
             program,
             host,
@@ -286,13 +290,23 @@ impl<'a> Vm<'a> {
             let slot = self.value_to_slot(v, ty)?;
             self.regs[i] = slot;
         }
-        self.frames.push(Frame { func, base: 0, ip: 0, ret_to: 0, nregs });
+        self.frames.push(Frame {
+            func,
+            base: 0,
+            ip: 0,
+            ret_to: 0,
+            nregs,
+        });
 
         // Monomorphise the dispatch loop into two copies: with and without
         // cancellation. The no-hook copy has the probe compiled out entirely
         // (measured: leaving even one always-false u64 compare in the loop
         // cost ~16% on fib(18)). `run` below is written once as a generic.
-        let result = match if self.cancel.is_some() { self.run::<true>() } else { self.run::<false>() } {
+        let result = match if self.cancel.is_some() {
+            self.run::<true>()
+        } else {
+            self.run::<false>()
+        } {
             Ok(slot) => slot,
             // The frame stack is still intact here: `run` returns before any
             // unwinding. Walking it costs nothing on the successful path,
@@ -324,7 +338,9 @@ impl<'a> Vm<'a> {
             } else {
                 // `ip` is the already-incremented resume offset.
                 let code = &self.program.funcs[f.func as usize].code;
-                f.ip.checked_sub(1).and_then(|i| code.get(i)).map(|i| (i.line as usize, i.col as usize))
+                f.ip.checked_sub(1)
+                    .and_then(|i| code.get(i))
+                    .map(|i| (i.line as usize, i.col as usize))
             };
             let (line, col) = loc.unwrap_or((0, 0));
             trace.push(TraceFrame { func, line, col });
@@ -402,7 +418,9 @@ impl<'a> Vm<'a> {
                 Op::ConstBool { dst, val } => {
                     self.regs[base + dst as usize] = Slot(if val { 1 } else { 0 })
                 }
-                Op::ConstStr { dst, id } => self.regs[base + dst as usize] = Slot::heap(id as usize),
+                Op::ConstStr { dst, id } => {
+                    self.regs[base + dst as usize] = Slot::heap(id as usize)
+                }
                 Op::ConstUnit { dst } => self.regs[base + dst as usize] = Slot(0),
                 Op::Mov { dst, src } => {
                     let v = self.regs[base + src as usize];
@@ -413,19 +431,25 @@ impl<'a> Vm<'a> {
                 Op::AddI64 { dst, a, b } => {
                     let x = self.regs[base + a as usize].as_i64();
                     let y = self.regs[base + b as usize].as_i64();
-                    let r = x.checked_add(y).ok_or_else(|| err_at("i64 add overflow", instr.span()))?;
+                    let r = x
+                        .checked_add(y)
+                        .ok_or_else(|| err_at("i64 add overflow", instr.span()))?;
                     self.regs[base + dst as usize] = Slot::i64(r);
                 }
                 Op::SubI64 { dst, a, b } => {
                     let x = self.regs[base + a as usize].as_i64();
                     let y = self.regs[base + b as usize].as_i64();
-                    let r = x.checked_sub(y).ok_or_else(|| err_at("i64 sub overflow", instr.span()))?;
+                    let r = x
+                        .checked_sub(y)
+                        .ok_or_else(|| err_at("i64 sub overflow", instr.span()))?;
                     self.regs[base + dst as usize] = Slot::i64(r);
                 }
                 Op::MulI64 { dst, a, b } => {
                     let x = self.regs[base + a as usize].as_i64();
                     let y = self.regs[base + b as usize].as_i64();
-                    let r = x.checked_mul(y).ok_or_else(|| err_at("i64 mul overflow", instr.span()))?;
+                    let r = x
+                        .checked_mul(y)
+                        .ok_or_else(|| err_at("i64 mul overflow", instr.span()))?;
                     self.regs[base + dst as usize] = Slot::i64(r);
                 }
                 Op::DivI64 { dst, a, b } => {
@@ -434,7 +458,9 @@ impl<'a> Vm<'a> {
                     if y == 0 {
                         return Err(err_at("division by zero", instr.span()));
                     }
-                    let r = x.checked_div(y).ok_or_else(|| err_at("i64 div overflow", instr.span()))?;
+                    let r = x
+                        .checked_div(y)
+                        .ok_or_else(|| err_at("i64 div overflow", instr.span()))?;
                     self.regs[base + dst as usize] = Slot::i64(r);
                 }
                 Op::ModI64 { dst, a, b } => {
@@ -443,31 +469,40 @@ impl<'a> Vm<'a> {
                     if y == 0 {
                         return Err(err_at("modulo by zero", instr.span()));
                     }
-                    let r = x.checked_rem(y).ok_or_else(|| err_at("i64 mod overflow", instr.span()))?;
+                    let r = x
+                        .checked_rem(y)
+                        .ok_or_else(|| err_at("i64 mod overflow", instr.span()))?;
                     self.regs[base + dst as usize] = Slot::i64(r);
                 }
                 Op::NegI64 { dst, src } => {
                     let x = self.regs[base + src as usize].as_i64();
-                    let r = x.checked_neg().ok_or_else(|| err_at("i64 negation overflow", instr.span()))?;
+                    let r = x
+                        .checked_neg()
+                        .ok_or_else(|| err_at("i64 negation overflow", instr.span()))?;
                     self.regs[base + dst as usize] = Slot::i64(r);
                 }
                 Op::AddI64Imm { dst, src, imm } => {
                     let x = self.regs[base + src as usize].as_i64();
-                    let r = x.checked_add(imm).ok_or_else(|| err_at("i64 add overflow", instr.span()))?;
+                    let r = x
+                        .checked_add(imm)
+                        .ok_or_else(|| err_at("i64 add overflow", instr.span()))?;
                     self.regs[base + dst as usize] = Slot::i64(r);
                 }
 
                 // ---- float arithmetic ----
                 Op::AddF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() + self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        + self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot::f64(r);
                 }
                 Op::SubF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() - self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        - self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot::f64(r);
                 }
                 Op::MulF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() * self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        * self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot::f64(r);
                 }
                 Op::DivF64 { dst, a, b } => {
@@ -493,63 +528,77 @@ impl<'a> Vm<'a> {
 
                 // ---- integer comparisons ----
                 Op::EqI64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_i64() == self.regs[base + b as usize].as_i64();
+                    let r = self.regs[base + a as usize].as_i64()
+                        == self.regs[base + b as usize].as_i64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::NeI64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_i64() != self.regs[base + b as usize].as_i64();
+                    let r = self.regs[base + a as usize].as_i64()
+                        != self.regs[base + b as usize].as_i64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::LtI64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_i64() < self.regs[base + b as usize].as_i64();
+                    let r = self.regs[base + a as usize].as_i64()
+                        < self.regs[base + b as usize].as_i64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::LeI64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_i64() <= self.regs[base + b as usize].as_i64();
+                    let r = self.regs[base + a as usize].as_i64()
+                        <= self.regs[base + b as usize].as_i64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::GtI64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_i64() > self.regs[base + b as usize].as_i64();
+                    let r = self.regs[base + a as usize].as_i64()
+                        > self.regs[base + b as usize].as_i64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::GeI64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_i64() >= self.regs[base + b as usize].as_i64();
+                    let r = self.regs[base + a as usize].as_i64()
+                        >= self.regs[base + b as usize].as_i64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
 
                 // ---- float comparisons ----
                 Op::EqF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() == self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        == self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::NeF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() != self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        != self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::LtF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() < self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        < self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::LeF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() <= self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        <= self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::GtF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() > self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        > self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::GeF64 { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_f64() >= self.regs[base + b as usize].as_f64();
+                    let r = self.regs[base + a as usize].as_f64()
+                        >= self.regs[base + b as usize].as_f64();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
 
                 // ---- bool comparisons ----
                 Op::EqBool { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_bool() == self.regs[base + b as usize].as_bool();
+                    let r = self.regs[base + a as usize].as_bool()
+                        == self.regs[base + b as usize].as_bool();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::NeBool { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_bool() != self.regs[base + b as usize].as_bool();
+                    let r = self.regs[base + a as usize].as_bool()
+                        != self.regs[base + b as usize].as_bool();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
 
@@ -558,32 +607,44 @@ impl<'a> Vm<'a> {
                 Op::EqStr { dst, a, b } => {
                     let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x == y)?;
                     steps = steps.saturating_add(w);
-                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
                 Op::NeStr { dst, a, b } => {
                     let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x != y)?;
                     steps = steps.saturating_add(w);
-                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
                 Op::LtStr { dst, a, b } => {
                     let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x < y)?;
                     steps = steps.saturating_add(w);
-                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
                 Op::LeStr { dst, a, b } => {
                     let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x <= y)?;
                     steps = steps.saturating_add(w);
-                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
                 Op::GtStr { dst, a, b } => {
                     let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x > y)?;
                     steps = steps.saturating_add(w);
-                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
                 Op::GeStr { dst, a, b } => {
                     let w = self.cmp_str(base, dst, a, b, instr.span(), |x, y| x >= y)?;
                     steps = steps.saturating_add(w);
-                    if steps > max_steps { return Err(err_at("step (gas) limit exceeded", instr.span())); }
+                    if steps > max_steps {
+                        return Err(err_at("step (gas) limit exceeded", instr.span()));
+                    }
                 }
 
                 // ---- handle identity ----
@@ -606,11 +667,13 @@ impl<'a> Vm<'a> {
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::AndBool { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_bool() && self.regs[base + b as usize].as_bool();
+                    let r = self.regs[base + a as usize].as_bool()
+                        && self.regs[base + b as usize].as_bool();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::OrBool { dst, a, b } => {
-                    let r = self.regs[base + a as usize].as_bool() || self.regs[base + b as usize].as_bool();
+                    let r = self.regs[base + a as usize].as_bool()
+                        || self.regs[base + b as usize].as_bool();
                     self.regs[base + dst as usize] = Slot(if r { 1 } else { 0 });
                 }
                 Op::Concat { dst, a, b } => {
@@ -618,15 +681,19 @@ impl<'a> Vm<'a> {
                     // "先建串再计费"——临时分配峰值不受配额约束。 gas 同步
                     // 按长度计（3.4）。
                     let (xlen, ylen) = {
-                        let x = self.heap_str(self.regs[base + a as usize].as_heap(), instr.span())?;
-                        let y = self.heap_str(self.regs[base + b as usize].as_heap(), instr.span())?;
+                        let x =
+                            self.heap_str(self.regs[base + a as usize].as_heap(), instr.span())?;
+                        let y =
+                            self.heap_str(self.regs[base + b as usize].as_heap(), instr.span())?;
                         (x.len(), y.len())
                     };
                     self.charge_work((xlen + ylen) as u64);
                     self.charge(xlen + ylen)?;
                     let joined = {
-                        let x = self.heap_str(self.regs[base + a as usize].as_heap(), instr.span())?;
-                        let y = self.heap_str(self.regs[base + b as usize].as_heap(), instr.span())?;
+                        let x =
+                            self.heap_str(self.regs[base + a as usize].as_heap(), instr.span())?;
+                        let y =
+                            self.heap_str(self.regs[base + b as usize].as_heap(), instr.span())?;
                         let mut s = String::with_capacity(x.len() + y.len());
                         s.push_str(x);
                         s.push_str(y);
@@ -646,9 +713,7 @@ impl<'a> Vm<'a> {
                 }
 
                 // ---- control flow ----
-                Op::Jump { target } => {
-                    ip = target
-                }
+                Op::Jump { target } => ip = target,
                 Op::JumpIfFalse { cond, target } => {
                     if !self.regs[base + cond as usize].as_bool() {
                         ip = target;
@@ -657,83 +722,115 @@ impl<'a> Vm<'a> {
 
                 // ---- fused compare-and-branch ----
                 Op::JmpIfEqI64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_i64() == self.regs[base + b as usize].as_i64() {
+                    if self.regs[base + a as usize].as_i64()
+                        == self.regs[base + b as usize].as_i64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfNeI64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_i64() != self.regs[base + b as usize].as_i64() {
+                    if self.regs[base + a as usize].as_i64()
+                        != self.regs[base + b as usize].as_i64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfLtI64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_i64() < self.regs[base + b as usize].as_i64() {
+                    if self.regs[base + a as usize].as_i64() < self.regs[base + b as usize].as_i64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfLeI64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_i64() <= self.regs[base + b as usize].as_i64() {
+                    if self.regs[base + a as usize].as_i64()
+                        <= self.regs[base + b as usize].as_i64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfGtI64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_i64() > self.regs[base + b as usize].as_i64() {
+                    if self.regs[base + a as usize].as_i64() > self.regs[base + b as usize].as_i64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfGeI64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_i64() >= self.regs[base + b as usize].as_i64() {
+                    if self.regs[base + a as usize].as_i64()
+                        >= self.regs[base + b as usize].as_i64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfEqF64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_f64() == self.regs[base + b as usize].as_f64() {
+                    if self.regs[base + a as usize].as_f64()
+                        == self.regs[base + b as usize].as_f64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfNeF64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_f64() != self.regs[base + b as usize].as_f64() {
+                    if self.regs[base + a as usize].as_f64()
+                        != self.regs[base + b as usize].as_f64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfLtF64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_f64() < self.regs[base + b as usize].as_f64() {
+                    if self.regs[base + a as usize].as_f64() < self.regs[base + b as usize].as_f64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfLeF64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_f64() <= self.regs[base + b as usize].as_f64() {
+                    if self.regs[base + a as usize].as_f64()
+                        <= self.regs[base + b as usize].as_f64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfGtF64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_f64() > self.regs[base + b as usize].as_f64() {
+                    if self.regs[base + a as usize].as_f64() > self.regs[base + b as usize].as_f64()
+                    {
                         ip = target;
                     }
                 }
                 Op::JmpIfGeF64 { a, b, target } => {
-                    if self.regs[base + a as usize].as_f64() >= self.regs[base + b as usize].as_f64() {
+                    if self.regs[base + a as usize].as_f64()
+                        >= self.regs[base + b as usize].as_f64()
+                    {
                         ip = target;
                     }
                 }
                 // ---- fused compare-immediate branch (one register read) ----
                 Op::JmpIfEqI64Imm { a, imm, target } => {
-                    if self.regs[base + a as usize].as_i64() == imm { ip = target; }
+                    if self.regs[base + a as usize].as_i64() == imm {
+                        ip = target;
+                    }
                 }
                 Op::JmpIfNeI64Imm { a, imm, target } => {
-                    if self.regs[base + a as usize].as_i64() != imm { ip = target; }
+                    if self.regs[base + a as usize].as_i64() != imm {
+                        ip = target;
+                    }
                 }
                 Op::JmpIfLtI64Imm { a, imm, target } => {
-                    if self.regs[base + a as usize].as_i64() < imm { ip = target; }
+                    if self.regs[base + a as usize].as_i64() < imm {
+                        ip = target;
+                    }
                 }
                 Op::JmpIfLeI64Imm { a, imm, target } => {
-                    if self.regs[base + a as usize].as_i64() <= imm { ip = target; }
+                    if self.regs[base + a as usize].as_i64() <= imm {
+                        ip = target;
+                    }
                 }
                 Op::JmpIfGtI64Imm { a, imm, target } => {
-                    if self.regs[base + a as usize].as_i64() > imm { ip = target; }
+                    if self.regs[base + a as usize].as_i64() > imm {
+                        ip = target;
+                    }
                 }
                 Op::JmpIfGeI64Imm { a, imm, target } => {
-                    if self.regs[base + a as usize].as_i64() >= imm { ip = target; }
+                    if self.regs[base + a as usize].as_i64() >= imm {
+                        ip = target;
+                    }
                 }
 
                 // ---- calls ----
@@ -759,8 +856,7 @@ impl<'a> Vm<'a> {
                         // 宽度——按调用次数计费会把 fib 这类合法递归误杀。
                         // nregs 因"寄存器只增不复用"极易做大（65535 窗口 ×
                         // 256 深度 ≈ 128 MiB 上界），现在受 max_heap 约束。
-                        let delta = (nbase + nregs - self.regs.len())
-                            * std::mem::size_of::<Slot>();
+                        let delta = (nbase + nregs - self.regs.len()) * std::mem::size_of::<Slot>();
                         self.charge(delta)?;
                         self.regs.resize(nbase + nregs, Slot(0));
                     }
@@ -770,7 +866,13 @@ impl<'a> Vm<'a> {
 
                     self.frames[fi].ip = ip;
                     let ncode = nf.code.as_slice();
-                    self.frames.push(Frame { func, base: nbase, ip: 0, ret_to: dst, nregs });
+                    self.frames.push(Frame {
+                        func,
+                        base: nbase,
+                        ip: 0,
+                        ret_to: dst,
+                        nregs,
+                    });
                     fi += 1;
                     base = nbase;
                     ip = 0;
@@ -811,7 +913,12 @@ impl<'a> Vm<'a> {
                         return Err(err_at("step (gas) limit exceeded", instr.span()));
                     }
                 }
-                Op::ContainsTyped { hay, needle, dst, ty } => {
+                Op::ContainsTyped {
+                    hay,
+                    needle,
+                    dst,
+                    ty,
+                } => {
                     let slot = self.contains_typed(base, hay, needle, ty, instr.span())?;
                     self.regs[base + dst as usize] = slot;
                     // 和 CallBuiltin 一样结算 O(n) 扫描的 gas（D-047：嵌套
@@ -834,12 +941,18 @@ impl<'a> Vm<'a> {
                     self.heap.push(HeapObj::Tuple(items));
                     self.regs[base + dst as usize] = Slot::heap(idx);
                 }
-                Op::GetTuple { dst, base: tbase, index } => {
+                Op::GetTuple {
+                    dst,
+                    base: tbase,
+                    index,
+                } => {
                     let idx = self.regs[base + tbase as usize].as_heap();
                     let item = match self.heap.get(idx) {
-                        Some(HeapObj::Tuple(items)) => items.get(index).copied().ok_or_else(|| {
-                            err_at(format!("tuple index {} out of range", index), instr.span())
-                        })?,
+                        Some(HeapObj::Tuple(items)) => {
+                            items.get(index).copied().ok_or_else(|| {
+                                err_at(format!("tuple index {} out of range", index), instr.span())
+                            })?
+                        }
                         _ => return Err(err_at("cannot index non-tuple", instr.span())),
                     };
                     self.regs[base + dst as usize] = item;
@@ -865,18 +978,18 @@ impl<'a> Vm<'a> {
                     };
                     self.regs[base + dst as usize] = Slot::i64(n as i64);
                 }
-                Op::ArrGet { dst, base: arr, idx } => {
+                Op::ArrGet {
+                    dst,
+                    base: arr,
+                    idx,
+                } => {
                     let a = self.regs[base + arr as usize].as_heap();
                     let i = self.regs[base + idx as usize].as_i64();
                     let item = match self.heap.get(a) {
                         Some(HeapObj::Arr(items)) => {
                             if i < 0 || i as usize >= items.len() {
                                 return Err(err_at(
-                                    format!(
-                                        "array index {} out of range (len {})",
-                                        i,
-                                        items.len()
-                                    ),
+                                    format!("array index {} out of range (len {})", i, items.len()),
                                     instr.span(),
                                 ));
                             }
@@ -1323,7 +1436,11 @@ impl<'a> Vm<'a> {
                 // 先量长度并计 gas（3.4），释放借用后再取子串。
                 let (st, en, work) = {
                     let s = self.heap_str(src_idx, span)?;
-                    let st = s.char_indices().nth(start).map(|(i, _)| i).unwrap_or(s.len());
+                    let st = s
+                        .char_indices()
+                        .nth(start)
+                        .map(|(i, _)| i)
+                        .unwrap_or(s.len());
                     let en = s
                         .char_indices()
                         .skip(start)

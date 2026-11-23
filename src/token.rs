@@ -31,16 +31,16 @@ pub enum TokenKind {
     Star,
     Slash,
     Percent,
-    Eq,       // ==
-    NotEq,    // !=
-    Lt,       // <
-    LtEq,     // <=
-    Gt,       // >
-    GtEq,     // >=
-    AndAnd,   // &&
-    OrOr,     // ||
-    Bang,     // !
-    Assign,   // =
+    Eq,     // ==
+    NotEq,  // !=
+    Lt,     // <
+    LtEq,   // <=
+    Gt,     // >
+    GtEq,   // >=
+    AndAnd, // &&
+    OrOr,   // ||
+    Bang,   // !
+    Assign, // =
 
     // Delimiters
     LParen,
@@ -52,10 +52,10 @@ pub enum TokenKind {
     DotDot,   // ..
     LBracket, // [ array literal / indexing / type annotation [T]
     RBracket,
-    Colon,    // : for optional type annotation
-    Arrow,    // -> for return type
+    Colon, // : for optional type annotation
+    Arrow, // -> for return type
 
-    Newline,  // statement terminator (no semicolons in this language)
+    Newline, // statement terminator (no semicolons in this language)
     Eof,
 }
 

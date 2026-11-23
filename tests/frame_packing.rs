@@ -30,7 +30,10 @@ fn nested_frames_with_different_window_sizes() -> Result<()> {
  v - 7 }
     "#;
     // inner(5)=12; mid(5,8)=20; outer=13
-    assert_eq!(run(src, "outer", vec![Value::I64(5), Value::I64(8)])?, Value::I64(13));
+    assert_eq!(
+        run(src, "outer", vec![Value::I64(5), Value::I64(8)])?,
+        Value::I64(13)
+    );
     Ok(())
 }
 
@@ -49,7 +52,10 @@ fn sibling_calls_after_return() -> Result<()> {
         }
     "#;
     // one(4)=5; two(5,6)=30; 35
-    assert_eq!(run(src, "go", vec![Value::I64(4), Value::I64(5), Value::I64(6)])?, Value::I64(35));
+    assert_eq!(
+        run(src, "go", vec![Value::I64(4), Value::I64(5), Value::I64(6)])?,
+        Value::I64(35)
+    );
     Ok(())
 }
 
@@ -75,6 +81,9 @@ fn many_args_across_windows() -> Result<()> {
  s + 1 }
     "#;
     // sum6(3,4,3,4,3,4)=21; +1=22
-    assert_eq!(run(src, "wrap", vec![Value::I64(3), Value::I64(4)])?, Value::I64(22));
+    assert_eq!(
+        run(src, "wrap", vec![Value::I64(3), Value::I64(4)])?,
+        Value::I64(22)
+    );
     Ok(())
 }

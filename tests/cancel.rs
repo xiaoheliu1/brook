@@ -32,7 +32,10 @@ fn hook_stops_a_pure_compute_infinite_loop() {
     assert_eq!(err.kind, ErrorKind::Runtime);
     assert_eq!(err.message, brook::error::CANCELLED_MESSAGE);
     assert_eq!(probes.get(), 3, "exactly three probes before the stop");
-    assert!(err.span.is_some(), "stop must point at the running instruction");
+    assert!(
+        err.span.is_some(),
+        "stop must point at the running instruction"
+    );
 }
 
 #[test]
@@ -50,7 +53,9 @@ fn stop_latency_is_bounded_by_the_probe_interval() {
     let src = "func work(n) { let i = 0\n while i < n { i = i + 1 }\n i }";
     let script = engine.load_str(src).unwrap();
     let n = CANCEL_CHECK_EVERY * 10;
-    let result = engine.call(&script, "work", vec![Value::I64(n as i64)]).unwrap();
+    let result = engine
+        .call(&script, "work", vec![Value::I64(n as i64)])
+        .unwrap();
     assert_eq!(result, Value::I64(n as i64));
     let calls = probe_count.get();
     assert!(
@@ -83,13 +88,22 @@ fn run_after_a_stop_fresh_state_no_sticky_cancellation() {
     let plain = engine.load_str("func answer() { 42 }").unwrap();
 
     stop.set(true);
-    assert!(engine.call(&spinner, "spin", vec![]).unwrap_err().is_cancelled());
+    assert!(engine
+        .call(&spinner, "spin", vec![])
+        .unwrap_err()
+        .is_cancelled());
     // The flag belongs to the caller, not to the engine: clearing it lets the
     // very same engine run the next script without any reset call.
     stop.set(false);
-    assert_eq!(engine.call(&plain, "answer", vec![]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&plain, "answer", vec![]).unwrap(),
+        Value::I64(42)
+    );
     stop.set(true);
-    assert!(engine.call(&spinner, "spin", vec![]).unwrap_err().is_cancelled());
+    assert!(engine
+        .call(&spinner, "spin", vec![])
+        .unwrap_err()
+        .is_cancelled());
 }
 
 #[test]
@@ -102,8 +116,16 @@ fn stop_error_renders_with_caret_and_call_stack() {
     assert!(err.is_cancelled());
     let report = script.report(&err);
     assert!(report.contains("script stopped by host"), "{}", report);
-    assert!(report.contains("inner"), "call stack must name the frame: {}", report);
-    assert!(report.contains("outer"), "call stack must name the caller: {}", report);
+    assert!(
+        report.contains("inner"),
+        "call stack must name the frame: {}",
+        report
+    );
+    assert!(
+        report.contains("outer"),
+        "call stack must name the caller: {}",
+        report
+    );
 }
 
 #[test]
@@ -116,7 +138,9 @@ fn no_hook_keeps_every_behavior_unchanged() {
 
     let ok = engine.load_str("func add(a, b) { a + b }").unwrap();
     assert_eq!(
-        engine.call(&ok, "add", vec![Value::I64(20), Value::I64(22)]).unwrap(),
+        engine
+            .call(&ok, "add", vec![Value::I64(20), Value::I64(22)])
+            .unwrap(),
         Value::I64(42)
     );
 }
@@ -132,9 +156,7 @@ fn host_function_error_aborts_the_whole_run() {
             Err(brook::Error::io("disk on fire"))
         })
         .unwrap();
-    let script = engine
-        .load_str("func f() { let x = boom()\n 99 }")
-        .unwrap();
+    let script = engine.load_str("func f() { let x = boom()\n 99 }").unwrap();
     let err = engine.call(&script, "f", vec![]).unwrap_err();
     assert_eq!(err.kind, ErrorKind::Io);
     assert!(err.message.contains("disk on fire"), "{}", err.message);

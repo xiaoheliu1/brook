@@ -45,8 +45,18 @@ fn call_eval(src: &str, func: &str, args: Vec<Value>) -> Result<Value, brook::Er
 macro_rules! assert_both {
     ($src:expr, $func:expr, $args:expr, $want:expr) => {{
         let want = $want;
-        assert_eq!(call_vm($src, $func, $args.clone()).unwrap(), want, "vm: {}", $src);
-        assert_eq!(call_eval($src, $func, $args.clone()).unwrap(), want, "eval: {}", $src);
+        assert_eq!(
+            call_vm($src, $func, $args.clone()).unwrap(),
+            want,
+            "vm: {}",
+            $src
+        );
+        assert_eq!(
+            call_eval($src, $func, $args.clone()).unwrap(),
+            want,
+            "eval: {}",
+            $src
+        );
     }};
 }
 
@@ -186,23 +196,13 @@ fn nested_arrays() {
 #[test]
 fn out_of_range_is_a_clean_error() {
     for runner in [call_vm, call_eval] {
-        let err = runner(
-            "func main() { let xs = [1, 2]  xs[5] }",
-            "main",
-            vec![],
-        )
-        .unwrap_err();
+        let err = runner("func main() { let xs = [1, 2]  xs[5] }", "main", vec![]).unwrap_err();
         assert!(
             err.message.contains("array index 5 out of range"),
             "{}",
             err.message
         );
-        let err = runner(
-            "func main() { let xs = [1, 2]  xs[0 - 1] }",
-            "main",
-            vec![],
-        )
-        .unwrap_err();
+        let err = runner("func main() { let xs = [1, 2]  xs[0 - 1] }", "main", vec![]).unwrap_err();
         assert!(err.message.contains("out of range"), "{}", err.message);
     }
 }
@@ -221,7 +221,11 @@ fn type_errors_are_rejected_at_compile() {
     assert!(err.message.contains("array literal"), "{}", err.message);
     // push 到非数组
     let err = engine.load_str("func main() { push(1, 2) }").unwrap_err();
-    assert!(err.message.contains("push expects an array"), "{}", err.message);
+    assert!(
+        err.message.contains("push expects an array"),
+        "{}",
+        err.message
+    );
     // 数组相等不支持（与元组同策略）
     let err = engine
         .load_str("func main() { let a = [1]  let b = [1]  a == b }")
@@ -280,7 +284,11 @@ fn push_loop_hits_heap_quota() {
         .load_str("func main() { let xs = []  for i in 0..100000 { push(xs, i) }  len(xs) }")
         .unwrap();
     let err = engine.call(&script, "main", vec![]).unwrap_err();
-    assert!(err.message.contains("memory limit exceeded"), "{}", err.message);
+    assert!(
+        err.message.contains("memory limit exceeded"),
+        "{}",
+        err.message
+    );
 }
 
 // ===========================================================================
@@ -313,7 +321,9 @@ func main(unc) {
         )
         .unwrap();
     assert_eq!(
-        engine.call(&script, "main", vec![Value::from("unc")]).unwrap(),
+        engine
+            .call(&script, "main", vec![Value::from("unc")])
+            .unwrap(),
         Value::from("unc/a.txt")
     );
 }
@@ -371,10 +381,7 @@ func main(rows: [(str, str)]) { pick(rows) }
 "#;
     let engine = Engine::new();
     let s1 = engine.compile_cached(src, "rows", &sbc).unwrap();
-    let rows = arr(vec![Value::Tuple(vec![
-        Value::from("x"),
-        Value::from("y"),
-    ])]);
+    let rows = arr(vec![Value::Tuple(vec![Value::from("x"), Value::from("y")])]);
     assert_eq!(
         engine.call(&s1, "main", vec![rows.clone()]).unwrap(),
         Value::from("x")
@@ -551,6 +558,10 @@ fn element_assignment_has_an_actionable_parse_error() {
         .load_str("func f() { let a = [1, 2]  a[0] = 5 }")
         .unwrap_err();
     assert!(err.message.contains("a[i] = v"), "got: {}", err.message);
-    assert!(err.message.contains("not supported yet"), "got: {}", err.message);
+    assert!(
+        err.message.contains("not supported yet"),
+        "got: {}",
+        err.message
+    );
     assert!(err.message.contains("push"), "got: {}", err.message);
 }

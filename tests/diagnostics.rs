@@ -8,13 +8,15 @@ use brook::Engine;
 fn column_counts_characters_not_bytes() {
     let engine = Engine::new();
     let err = engine
-        .load_str(
-            "func f() -> i64 {\n    let s = \"中文\" + 1\n}",
-        )
+        .load_str("func f() -> i64 {\n    let s = \"中文\" + 1\n}")
         .unwrap_err();
     let span = err.span.expect("type error carries a span");
     assert_eq!(span.line, 2);
-    assert_eq!(span.col, 18, "the `+` is the 18th character on line 2: {}", err);
+    assert_eq!(
+        span.col, 18,
+        "the `+` is the 18th character on line 2: {}",
+        err
+    );
     assert!(err.to_string().contains("at 2:18"), "{}", err);
 }
 
@@ -24,9 +26,7 @@ fn column_counts_characters_not_bytes() {
 fn ascii_column_is_unchanged() {
     let engine = Engine::new();
     let err = engine
-        .load_str(
-            "func f() -> i64 {\n    let s = \"ab\" + 1\n}",
-        )
+        .load_str("func f() -> i64 {\n    let s = \"ab\" + 1\n}")
         .unwrap_err();
     let span = err.span.expect("type error carries a span");
     assert_eq!((span.line, span.col), (2, 18), "{}", err);
@@ -48,7 +48,12 @@ func main() -> i64 { a(3) }",
     let names: Vec<&str> = err.trace.iter().map(|f| f.func.as_str()).collect();
     assert_eq!(names, ["main", "a", "b", "c"], "{}", err);
     // Every caller reports the call site, not its own body start.
-    assert_eq!((err.trace[0].line, err.trace[0].col), (4, 22), "main: {}", err);
+    assert_eq!(
+        (err.trace[0].line, err.trace[0].col),
+        (4, 22),
+        "main: {}",
+        err
+    );
     assert_eq!((err.trace[1].line, err.trace[1].col), (3, 25), "a: {}", err);
     assert_eq!((err.trace[2].line, err.trace[2].col), (2, 25), "b: {}", err);
     // The innermost frame points at the faulting instruction itself.
@@ -66,8 +71,19 @@ fn depth_limit_trace_keeps_the_frames() {
         .unwrap();
     let err = engine.call(&script, "main", vec![]).unwrap_err();
     assert!(err.message.contains("call depth limit exceeded"), "{}", err);
-    assert_eq!(err.trace.len(), 8, "main + 7 nested `down` (depth cap 8): {}", err);
-    assert!(err.trace.iter().all(|f| f.func == "down" || f.func == "main"), "{}", err);
+    assert_eq!(
+        err.trace.len(),
+        8,
+        "main + 7 nested `down` (depth cap 8): {}",
+        err
+    );
+    assert!(
+        err.trace
+            .iter()
+            .all(|f| f.func == "down" || f.func == "main"),
+        "{}",
+        err
+    );
 }
 
 /// Compile-time errors have no call stack, and that must not panic.
@@ -119,7 +135,10 @@ fn caret_alignment(report: &str, line_no: usize) -> (usize, usize) {
     let source = &lines[idx][prefix.len()..];
     let caret_prefix = format!("{} | ", " ".repeat(line_no.to_string().len()));
     let caret = &lines[idx + 1][caret_prefix.len()..];
-    let col = display_col(source, source.find('+').expect("line contains the operator"));
+    let col = display_col(
+        source,
+        source.find('+').expect("line contains the operator"),
+    );
     let head = caret.find('^').expect("caret present");
     (col, head)
 }
@@ -133,7 +152,11 @@ fn compile_error_shows_the_offending_line() {
 
     assert!(report.starts_with("[type] error at 2:18:"), "{}", report);
     assert!(report.contains("  --> price.bk:2:18"), "{}", report);
-    assert!(report.contains("2 |     let s = \"中文\" + 1"), "{}", report);
+    assert!(
+        report.contains("2 |     let s = \"中文\" + 1"),
+        "{}",
+        report
+    );
     // Two CJK glyphs are two columns each in a terminal; the caret must follow
     // the rendered width, not the character count.
     assert_eq!(caret_alignment(&report, 2), (19, 19), "{}", report);
@@ -157,7 +180,11 @@ fn runtime_error_renders_the_stack() {
     let report = script.report(&err);
 
     assert!(report.contains("division by zero"), "{}", report);
-    assert!(report.contains("= call stack (outermost first):"), "{}", report);
+    assert!(
+        report.contains("= call stack (outermost first):"),
+        "{}",
+        report
+    );
     assert!(report.contains("1. main (8:5)"), "{}", report);
     assert!(report.contains("2. b (5:5)"), "{}", report);
     assert!(report.contains("3. c (2:7)"), "{}", report);
@@ -167,7 +194,8 @@ fn runtime_error_renders_the_stack() {
 #[test]
 fn deep_stack_is_elided() {
     let engine = Engine::new().with_limits(1_000_000, 40);
-    let src = "func down(n: i64) -> i64 {\n    down(n + 1)\n}\nfunc main() -> i64 {\n    down(0)\n}";
+    let src =
+        "func down(n: i64) -> i64 {\n    down(n + 1)\n}\nfunc main() -> i64 {\n    down(0)\n}";
     let script = engine.load_str(src).unwrap();
     let report = script.report(&engine.call(&script, "main", vec![]).unwrap_err());
     assert!(report.contains("\n      ...\n"), "{}", report);
@@ -187,6 +215,10 @@ fn cached_script_reports_against_source() {
     let src = "func f() -> i64 {\n    1 / 0\n}\n";
     let script = engine.compile_cached(src, "diag.bk", &cache).unwrap();
     let err = engine.call(&script, "f", vec![]).unwrap_err();
-    assert!(script.report(&err).contains("diag.bk:2:7"), "{}", script.report(&err));
+    assert!(
+        script.report(&err).contains("diag.bk:2:7"),
+        "{}",
+        script.report(&err)
+    );
     let _ = std::fs::remove_file(&cache);
 }

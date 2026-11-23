@@ -30,7 +30,10 @@ fn while_break_exits_early() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "first_over", vec![Value::I64(50)])?, Value::I64(8));
+    assert_eq!(
+        engine.call(&script, "first_over", vec![Value::I64(50)])?,
+        Value::I64(8)
+    );
     Ok(())
 }
 
@@ -51,7 +54,10 @@ fn while_continue_skips_rest_of_body() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "sum_odd", vec![Value::I64(6)])?, Value::I64(9));
+    assert_eq!(
+        engine.call(&script, "sum_odd", vec![Value::I64(6)])?,
+        Value::I64(9)
+    );
     Ok(())
 }
 
@@ -72,8 +78,14 @@ fn for_break_exits_early() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "first_divisor", vec![Value::I64(91)])?, Value::I64(7));
-    assert_eq!(engine.call(&script, "first_divisor", vec![Value::I64(97)])?, Value::I64(-1));
+    assert_eq!(
+        engine.call(&script, "first_divisor", vec![Value::I64(91)])?,
+        Value::I64(7)
+    );
+    assert_eq!(
+        engine.call(&script, "first_divisor", vec![Value::I64(97)])?,
+        Value::I64(-1)
+    );
     Ok(())
 }
 
@@ -95,7 +107,10 @@ fn for_continue_still_advances() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "sum_even", vec![Value::I64(6)])?, Value::I64(6));
+    assert_eq!(
+        engine.call(&script, "sum_even", vec![Value::I64(6)])?,
+        Value::I64(6)
+    );
     Ok(())
 }
 
@@ -117,7 +132,10 @@ fn break_only_leaves_the_inner_loop() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "triangle", vec![Value::I64(3)])?, Value::I64(6));
+    assert_eq!(
+        engine.call(&script, "triangle", vec![Value::I64(3)])?,
+        Value::I64(6)
+    );
     Ok(())
 }
 
@@ -139,7 +157,10 @@ fn continue_in_inner_loop_is_scoped() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "even_cells", vec![Value::I64(3)])?, Value::I64(6));
+    assert_eq!(
+        engine.call(&script, "even_cells", vec![Value::I64(3)])?,
+        Value::I64(6)
+    );
     Ok(())
 }
 
@@ -179,7 +200,10 @@ fn break_in_if_expression_keeps_value_type() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "sum_until", vec![Value::I64(5)])?, Value::I64(1));
+    assert_eq!(
+        engine.call(&script, "sum_until", vec![Value::I64(5)])?,
+        Value::I64(1)
+    );
     Ok(())
 }
 
@@ -187,14 +211,22 @@ fn break_in_if_expression_keeps_value_type() -> Result<()> {
 fn break_outside_loop_is_a_compile_error() {
     let engine = Engine::new();
     let err = engine.load_str("func f() { break }").unwrap_err();
-    assert!(err.message.contains("outside of a loop"), "got: {}", err.message);
+    assert!(
+        err.message.contains("outside of a loop"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[test]
 fn continue_outside_loop_is_a_compile_error() {
     let engine = Engine::new();
     let err = engine.load_str("func f() { continue }").unwrap_err();
-    assert!(err.message.contains("outside of a loop"), "got: {}", err.message);
+    assert!(
+        err.message.contains("outside of a loop"),
+        "got: {}",
+        err.message
+    );
 }
 
 /// `break` inside an `if` that is not inside a loop is still an error: the
@@ -205,7 +237,11 @@ fn break_inside_if_without_loop_is_rejected() {
     let err = engine
         .load_str("func f(n) { if n > 0 { break } }")
         .unwrap_err();
-    assert!(err.message.contains("outside of a loop"), "got: {}", err.message);
+    assert!(
+        err.message.contains("outside of a loop"),
+        "got: {}",
+        err.message
+    );
 }
 
 /// Jump targets are absolute instruction indices, so they must survive the
@@ -242,10 +278,16 @@ fn cached_script_preserves_loop_targets() -> Result<()> {
 
     let engine = Engine::new();
     let fresh = engine.compile_cached(src, "loops", &path)?;
-    assert_eq!(engine.call(&fresh, "sum_odd", vec![Value::I64(6)])?, Value::I64(9));
+    assert_eq!(
+        engine.call(&fresh, "sum_odd", vec![Value::I64(6)])?,
+        Value::I64(9)
+    );
 
     let cached = engine.compile_cached(src, "loops", &path)?;
-    assert_eq!(engine.call(&cached, "sum_odd", vec![Value::I64(6)])?, Value::I64(9));
+    assert_eq!(
+        engine.call(&cached, "sum_odd", vec![Value::I64(6)])?,
+        Value::I64(9)
+    );
     assert_eq!(
         engine.call(&cached, "first_divisor", vec![Value::I64(91)])?,
         Value::I64(7)

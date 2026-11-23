@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 type NativeFn = dyn Fn(&[Value]) -> Result<Value>;
+type ImportResolver = dyn Fn(&str) -> std::result::Result<String, Error>;
+type ImportReport = (ast::Program, String, Vec<(String, u64, bool)>);
 
 /// A host function together with its stable slot id and script-facing signature.
 struct HostEntry {
@@ -29,6 +31,7 @@ struct HostEntry {
 /// Registry of host-provided functions. Slot ids are assigned in registration
 /// order so bytecode can refer to functions by a stable `u16` (no name lookup
 /// at runtime).
+#[derive(Default)]
 pub struct HostRegistry {
     entries: Vec<HostEntry>,
     ids: HashMap<String, u16>,
@@ -36,7 +39,7 @@ pub struct HostRegistry {
 
 impl HostRegistry {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), ids: HashMap::new() }
+        Self::default()
     }
 
     pub fn register(
@@ -48,11 +51,17 @@ impl HostRegistry {
     ) -> Result<()> {
         let name = name.into();
         if self.ids.contains_key(&name) {
-            return Err(Error::runtime(format!("host function `{}` is already registered", name)));
+            return Err(Error::runtime(format!(
+                "host function `{}` is already registered",
+                name
+            )));
         }
         let id = self.entries.len() as u16;
         self.ids.insert(name, id);
-        self.entries.push(HostEntry { sig: FuncSig { params, ret }, f });
+        self.entries.push(HostEntry {
+            sig: FuncSig { params, ret },
+            f,
+        });
         Ok(())
     }
 
@@ -74,20 +83,30 @@ impl HostRegistry {
     }
 
     pub fn invoke_by_id(&self, id: u16, args: &[Value]) -> Result<Value> {
-        let entry = self.entries.get(id as usize).ok_or_else(|| Error::runtime("unknown host function"))?;
+        let entry = self
+            .entries
+            .get(id as usize)
+            .ok_or_else(|| Error::runtime("unknown host function"))?;
         (entry.f)(args)
     }
 
     /// Name-based lookup retained for the reference AST interpreter (`eval.rs`).
     /// The bytecode VM never uses this path — calls are resolved to slot ids.
     pub fn invoke(&self, name: &str, args: &[Value]) -> Result<Value> {
-        let id = self.ids.get(name).ok_or_else(|| Error::runtime("unknown host function"))?;
+        let id = self
+            .ids
+            .get(name)
+            .ok_or_else(|| Error::runtime("unknown host function"))?;
         self.invoke_by_id(*id, args)
     }
 
     /// Number of registered host slots; `CallHost.func` must be below it.
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn signatures(&self) -> HashMap<String, FuncSig> {
@@ -213,7 +232,7 @@ pub struct Engine {
     type_names: std::collections::HashSet<String>,
     /// 约定式 import 的自定义解析器——设置时优先于 `import_dir`，
     /// 宿主决定 `import "名字"` 的源码内容（assets / DB / 内置字符串）。
-    import_resolver: Option<Rc<dyn Fn(&str) -> std::result::Result<String, Error>>>,
+    import_resolver: Option<Rc<ImportResolver>>,
     /// Optional "should this run be stopped?" hook, polled every 65536
     /// instructions. The host's callback reads its own cancel flag (a JNI
     /// call on Android); the engine never owns cancellation state, so a new
@@ -429,15 +448,14 @@ impl Engine {
     pub fn save_sbc<P: AsRef<Path>>(&self, script: &Script, path: P) -> Result<()> {
         let path = path.as_ref();
         let bytes = self.script_to_bytes(script);
-        std::fs::write(path, bytes)
-            .map_err(|e| Error::io(format!("{}: {}", path.display(), e)))
+        std::fs::write(path, bytes).map_err(|e| Error::io(format!("{}: {}", path.display(), e)))
     }
 
     /// Load a `.sbc` file without touching the source file.
     pub fn load_sbc<P: AsRef<Path>>(&self, path: P) -> Result<Script> {
         let path = path.as_ref();
-        let bytes = std::fs::read(path)
-            .map_err(|e| Error::io(format!("{}: {}", path.display(), e)))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| Error::io(format!("{}: {}", path.display(), e)))?;
         self.script_from_bytes(&bytes)
     }
 
@@ -484,7 +502,11 @@ impl Engine {
         let path = path.as_ref();
         let src = std::fs::read_to_string(path)
             .map_err(|e| Error::io(format!("{}: {}", path.display(), e)))?;
-        self.compile_cached(&src, path.to_string_lossy().to_string(), path.with_extension("sbc"))
+        self.compile_cached(
+            &src,
+            path.to_string_lossy().to_string(),
+            path.with_extension("sbc"),
+        )
     }
 
     /// Hot reload backed by `load_cached` (cache hit skips recompilation).
@@ -505,9 +527,10 @@ impl Engine {
         }
         // Coerce args to the declared parameter types (e.g. host passes i64 to
         // a parameter inferred as f64). Same semantics as the phase-1 evaluator.
-        let sig = script.sigs.get(name).ok_or_else(|| {
-            Error::runtime(format!("unknown function `{}`", name))
-        })?;
+        let sig = script
+            .sigs
+            .get(name)
+            .ok_or_else(|| Error::runtime(format!("unknown function `{}`", name)))?;
         if sig.params.len() != args.len() {
             return Err(Error::runtime(format!(
                 "`{}` expects {} args, got {}",
@@ -537,9 +560,10 @@ impl Engine {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let func = script.code.id_of(name).ok_or_else(|| {
-            Error::runtime(format!("`{}` is not a script function", name))
-        })?;
+        let func = script
+            .code
+            .id_of(name)
+            .ok_or_else(|| Error::runtime(format!("`{}` is not a script function", name)))?;
 
         // Panic boundary: a bug in the VM (or in a host callback) must not
         // unwind through the host's call stack. This is a hard guarantee of the
@@ -653,11 +677,7 @@ impl<'a> ImportLoader<'a> {
 
     /// 载入主脚本（含递归依赖，依赖在前）。
     /// 返回 (合并 AST, 拼接视图文本, 依赖清单)。
-    fn load(
-        mut self,
-        src: &str,
-        name: &str,
-    ) -> Result<(ast::Program, String, Vec<(String, u64, bool)>)> {
+    fn load(mut self, src: &str, name: &str) -> Result<ImportReport> {
         self.load_unit(
             name.to_string(),
             src.to_string(),
@@ -803,10 +823,7 @@ impl<'a> ImportLoader<'a> {
         // 自定义解析器优先（assets / DB / 加密等特殊部署）
         if let Some(res) = &self.engine.import_resolver {
             let src = res(name).map_err(|e| {
-                Error::type_error(
-                    format!("import \"{}\" 解析失败: {}", name, e.message),
-                    span,
-                )
+                Error::type_error(format!("import \"{}\" 解析失败: {}", name, e.message), span)
             })?;
             return Ok((name.to_string(), src, None, false));
         }
@@ -838,18 +855,15 @@ impl<'a> ImportLoader<'a> {
                 span,
             ));
         }
-        let src = std::fs::read_to_string(&path).map_err(|e| {
-            Error::io(format!("读取 import 文件失败 {}: {}", path.display(), e))
-        })?;
+        let src = std::fs::read_to_string(&path)
+            .map_err(|e| Error::io(format!("读取 import 文件失败 {}: {}", path.display(), e)))?;
 
         // 逃逸防护：解析后的真实路径必须落在查找目录之内——防符号链接 /
         // junction 把 import 引到脚本目录树外（与 so_demo fs 护栏同一哲学）
-        let canon_dir = std::fs::canonicalize(&dir).map_err(|e| {
-            Error::io(format!("import 目录不可访问 {}: {}", dir.display(), e))
-        })?;
-        let canon_path = std::fs::canonicalize(&path).map_err(|e| {
-            Error::io(format!("import \"{}\": {}", path.display(), e))
-        })?;
+        let canon_dir = std::fs::canonicalize(&dir)
+            .map_err(|e| Error::io(format!("import 目录不可访问 {}: {}", dir.display(), e)))?;
+        let canon_path = std::fs::canonicalize(&path)
+            .map_err(|e| Error::io(format!("import \"{}\": {}", path.display(), e)))?;
         if !canon_path.starts_with(&canon_dir) {
             return Err(Error::type_error(
                 format!(
@@ -904,9 +918,30 @@ impl<'a> ImportLoader<'a> {
             let stem = comp.split('.').next().unwrap_or(comp);
             if matches!(
                 stem.to_ascii_uppercase().as_str(),
-                "CON" | "PRN" | "AUX" | "NUL" | "COM0" | "COM1" | "COM2" | "COM3" | "COM4"
-                | "COM5" | "COM6" | "COM7" | "COM8" | "COM9" | "LPT0" | "LPT1" | "LPT2"
-                | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+                "CON"
+                    | "PRN"
+                    | "AUX"
+                    | "NUL"
+                    | "COM0"
+                    | "COM1"
+                    | "COM2"
+                    | "COM3"
+                    | "COM4"
+                    | "COM5"
+                    | "COM6"
+                    | "COM7"
+                    | "COM8"
+                    | "COM9"
+                    | "LPT0"
+                    | "LPT1"
+                    | "LPT2"
+                    | "LPT3"
+                    | "LPT4"
+                    | "LPT5"
+                    | "LPT6"
+                    | "LPT7"
+                    | "LPT8"
+                    | "LPT9"
             ) {
                 return Err(Error::type_error(
                     format!("import 路径包含 Windows 保留设备名: \"{name}\""),

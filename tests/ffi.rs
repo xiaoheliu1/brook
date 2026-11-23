@@ -43,7 +43,11 @@ fn ffi_compiles_and_calls_a_script() {
     let r = call(Some("func twice(x) { x + x }"), Some("twice"), 21);
     assert_eq!(r.code, MS_OK, "error: {}", r.error);
     assert_eq!(r.out, 42);
-    let r2 = call(Some("func fib(n) { if n < 2 { n } else { fib(n-1) + fib(n-2) } }"), Some("fib"), 12);
+    let r2 = call(
+        Some("func fib(n) { if n < 2 { n } else { fib(n-1) + fib(n-2) } }"),
+        Some("fib"),
+        12,
+    );
     assert_eq!(r2.code, MS_OK, "error: {}", r2.error);
     assert_eq!(r2.out, 144);
 }
@@ -53,14 +57,22 @@ fn ffi_errors_are_returned_not_unwound() {
     // Call-stage failure: the script compiled, but there is no such function.
     let bad_func = call(Some("func go(x) { x }"), Some("missing"), 1);
     assert_eq!(bad_func.code, MS_ERR_RUNTIME);
-    assert!(bad_func.error.contains("unknown function"), "got: {}", bad_func.error);
+    assert!(
+        bad_func.error.contains("unknown function"),
+        "got: {}",
+        bad_func.error
+    );
     assert_eq!((bad_func.line, bad_func.col), (0, 0), "no source location");
 
     // f64 result cannot be written into an i64 out slot: a contract mismatch,
     // reported as a compile-stage/ABI error rather than a script runtime bug.
     let wrong_ty = call(Some("func go(x) { to_f64(x) }"), Some("go"), 1);
     assert_eq!(wrong_ty.code, MS_ERR_ENGINE);
-    assert!(wrong_ty.error.contains("expected i64"), "got: {}", wrong_ty.error);
+    assert!(
+        wrong_ty.error.contains("expected i64"),
+        "got: {}",
+        wrong_ty.error
+    );
 
     let null = call(None, Some("go"), 1);
     assert_eq!(null.code, MS_ERR_NULL);
@@ -76,12 +88,20 @@ fn ffi_distinguishes_compile_errors_from_runtime_errors() {
     // A type error inside the script: nothing runs.
     let type_err = call(Some("func go(x) { let n: i64 = \"s\"  n }"), Some("go"), 1);
     assert_eq!(type_err.code, MS_ERR_ENGINE, "got: {}", type_err.error);
-    assert!(type_err.error.contains("found str"), "got: {}", type_err.error);
+    assert!(
+        type_err.error.contains("found str"),
+        "got: {}",
+        type_err.error
+    );
 
     // Division by zero: compiled fine, failed while running.
     let div0 = call(Some("func go(x) { 100 / x }"), Some("go"), 0);
     assert_eq!(div0.code, MS_ERR_RUNTIME, "got: {}", div0.error);
-    assert!(div0.error.contains("division by zero"), "got: {}", div0.error);
+    assert!(
+        div0.error.contains("division by zero"),
+        "got: {}",
+        div0.error
+    );
 }
 
 #[test]
@@ -120,20 +140,40 @@ fn ffi_error_buffer_is_nul_terminated_and_truncated_safely() {
 // ---------------------------------------------------------------------------
 
 fn val_i64(n: i64) -> MsVal {
-    MsVal { tag: MS_VAL_I64, i: n, f: 0.0, s: std::ptr::null() }
+    MsVal {
+        tag: MS_VAL_I64,
+        i: n,
+        f: 0.0,
+        s: std::ptr::null(),
+    }
 }
 
 fn val_f64(x: f64) -> MsVal {
-    MsVal { tag: MS_VAL_F64, i: 0, f: x, s: std::ptr::null() }
+    MsVal {
+        tag: MS_VAL_F64,
+        i: 0,
+        f: x,
+        s: std::ptr::null(),
+    }
 }
 
 fn val_bool(b: bool) -> MsVal {
-    MsVal { tag: MS_VAL_BOOL, i: if b { 1 } else { 0 }, f: 0.0, s: std::ptr::null() }
+    MsVal {
+        tag: MS_VAL_BOOL,
+        i: if b { 1 } else { 0 },
+        f: 0.0,
+        s: std::ptr::null(),
+    }
 }
 
 fn val_str(s: &str) -> MsVal {
     let bytes = s.as_bytes();
-    MsVal { tag: MS_VAL_STR, i: bytes.len() as i64, f: 0.0, s: bytes.as_ptr().cast::<c_char>() }
+    MsVal {
+        tag: MS_VAL_STR,
+        i: bytes.len() as i64,
+        f: 0.0,
+        s: bytes.as_ptr().cast::<c_char>(),
+    }
 }
 
 /// Read the last error / report after an FFI call.
@@ -162,7 +202,12 @@ unsafe fn call_script(
     args: &[MsVal],
 ) -> (i32, MsValOut, Vec<u8>) {
     let func = CString::new(func).unwrap();
-    let mut out = MsValOut { tag: 0, i: 0, f: 0.0, len: 0 };
+    let mut out = MsValOut {
+        tag: 0,
+        i: 0,
+        f: 0.0,
+        len: 0,
+    };
     let mut buf = vec![0x7fu8; 256];
     let code = ms_script_call(
         ptr,
@@ -178,7 +223,11 @@ unsafe fn call_script(
 
 #[test]
 fn ffi_script_handle_lifecycle() {
-    let ptr = unsafe { create_script("func fib(n) { if n < 2 { n } else { fib(n-1) + fib(n-2) } }\nfunc unit() { }") };
+    let ptr = unsafe {
+        create_script(
+            "func fib(n) { if n < 2 { n } else { fib(n-1) + fib(n-2) } }\nfunc unit() { }",
+        )
+    };
 
     // Repeated calls on one compilation.
     for _ in 0..3 {
@@ -267,7 +316,12 @@ fn ffi_script_strings_cross_the_boundary() {
     // A buffer that is too small: MS_ERR_BUFFER with the required size, no
     // write, retry with a bigger buffer.
     let func = CString::new("greet").unwrap();
-    let mut out = MsValOut { tag: 0, i: 0, f: 0.0, len: 0 };
+    let mut out = MsValOut {
+        tag: 0,
+        i: 0,
+        f: 0.0,
+        len: 0,
+    };
     let mut small = [0x7fu8; 4];
     let args = [val_str("中文")];
     let code = unsafe {
@@ -365,7 +419,11 @@ fn ffi_script_errors_carry_report_diagnostics() {
     assert_eq!(ms_last_error_line(), 2);
     assert!(report.contains("--> test.bk:2:"), "got: {}", report);
     assert!(report.contains("call stack"), "got: {}", report);
-    assert!(report.contains("100 / x"), "source line rendered, got: {}", report);
+    assert!(
+        report.contains("100 / x"),
+        "source line rendered, got: {}",
+        report
+    );
     assert_eq!(unsafe { ms_script_free(ptr) }, MS_OK);
 
     // Compile failure at create: report rendered against the rejected source.
@@ -396,21 +454,41 @@ fn ffi_script_contract_and_null_errors() {
     assert_eq!(unsafe { ms_script_free(tuple_script) }, MS_OK);
 
     // Unknown value tag and negative string length: caller contract.
-    let bogus = MsVal { tag: 99, i: 0, f: 0.0, s: std::ptr::null() };
+    let bogus = MsVal {
+        tag: 99,
+        i: 0,
+        f: 0.0,
+        s: std::ptr::null(),
+    };
     let (code, _, _) = unsafe { call_script(ptr, "go", &[bogus]) };
     assert_eq!(code, MS_ERR_ENGINE);
-    let bad_len = MsVal { tag: MS_VAL_STR, i: -3, f: 0.0, s: std::ptr::null() };
+    let bad_len = MsVal {
+        tag: MS_VAL_STR,
+        i: -3,
+        f: 0.0,
+        s: std::ptr::null(),
+    };
     let (code, _, _) = unsafe { call_script(ptr, "go", &[bad_len]) };
     assert_eq!(code, MS_ERR_ENGINE);
 
     // Non-empty STR payload with a null pointer: reported, not dereferenced.
-    let null_payload = MsVal { tag: MS_VAL_STR, i: 5, f: 0.0, s: std::ptr::null() };
+    let null_payload = MsVal {
+        tag: MS_VAL_STR,
+        i: 5,
+        f: 0.0,
+        s: std::ptr::null(),
+    };
     let (code, _, _) = unsafe { call_script(ptr, "go", &[null_payload]) };
     assert_eq!(code, MS_ERR_NULL, "{}", last_error_and_report().0);
 
     // Nulls are reported, never dereferenced.
     let func = CString::new("go").unwrap();
-    let mut out = MsValOut { tag: 0, i: 0, f: 0.0, len: 0 };
+    let mut out = MsValOut {
+        tag: 0,
+        i: 0,
+        f: 0.0,
+        len: 0,
+    };
     let args = [val_i64(1)];
     assert_eq!(
         unsafe {
@@ -454,7 +532,12 @@ fn ffi_script_thread_ownership_is_enforced() {
     let handle = std::thread::spawn(move || {
         let p = addr as *mut brook::ffi::MsScript;
         let func = CString::new("go").unwrap();
-        let mut out = MsValOut { tag: 0, i: 0, f: 0.0, len: 0 };
+        let mut out = MsValOut {
+            tag: 0,
+            i: 0,
+            f: 0.0,
+            len: 0,
+        };
         let args = [val_i64(1)];
         let code = unsafe {
             ms_script_call(

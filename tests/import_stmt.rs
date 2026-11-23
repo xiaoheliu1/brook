@@ -10,8 +10,8 @@
 //! 宿主实现细节（共享引擎、拼接视图、缓存依赖校验）见 HOST_GUIDE §12.1
 //! 与 `tests/migration_so_demo.rs::cross_script_call_via_host_function`。
 
-use std::path::{Path, PathBuf};
 use brook::{Engine, Value};
+use std::path::{Path, PathBuf};
 
 struct TmpDir(PathBuf);
 
@@ -62,10 +62,7 @@ fn same_directory_import_and_call() {
 fn subdirectory_import_works() {
     let dir = TmpDir::new("subdir");
     dir.write("lib/net.bk", "func ping() { 1 }");
-    let main = dir.write(
-        "task.bk",
-        "import \"lib/net\"\n\nfunc main() { ping() }",
-    );
+    let main = dir.write("task.bk", "import \"lib/net\"\n\nfunc main() { ping() }");
 
     let engine = Engine::new();
     let script = engine.load_file(&main).unwrap();
@@ -94,14 +91,14 @@ fn imports_are_relative_to_the_importing_script() {
     // lib/net.bk 自己再 import 同目录（lib/）下的 codec.bk —— 相对导入者解析
     dir.write("lib/codec.bk", "func enc(n) { n + 1 }");
     dir.write("lib/net.bk", "import \"codec\"\n\nfunc ping2() { enc(41) }");
-    let main = dir.write(
-        "task.bk",
-        "import \"lib/net\"\n\nfunc main() { ping2() }",
-    );
+    let main = dir.write("task.bk", "import \"lib/net\"\n\nfunc main() { ping2() }");
 
     let engine = Engine::new();
     let script = engine.load_file(&main).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
 }
 
 #[test]
@@ -128,7 +125,11 @@ fn name_collision_with_library_is_a_compile_error() {
 
     let engine = Engine::new();
     let err = engine.load_file(&main).unwrap_err();
-    assert!(err.message.contains("duplicate definition"), "{}", err.message);
+    assert!(
+        err.message.contains("duplicate definition"),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
@@ -139,21 +140,12 @@ fn path_guards_reject_escape_attempts() {
     let engine = Engine::new();
     // .. 回溯被路径护栏拒绝（编译错误，不会读到目录树外的文件）
     let err = engine.load_file(dir.path().join("task.bk")).unwrap_err();
-    assert!(
-        err.message.contains("不允许 '.' / '..'"),
-        "{}",
-        err.message
-    );
+    assert!(err.message.contains("不允许 '.' / '..'"), "{}", err.message);
 
     // 绝对路径同样拒绝
-    let abs = dir
-        .write("abs.bk", "import \"/etc/passwd\"\n\nfunc main() { 1 }");
+    let abs = dir.write("abs.bk", "import \"/etc/passwd\"\n\nfunc main() { 1 }");
     let err = engine.load_file(&abs).unwrap_err();
-    assert!(
-        err.message.contains("相对路径"),
-        "{}",
-        err.message
-    );
+    assert!(err.message.contains("相对路径"), "{}", err.message);
 }
 
 #[test]
@@ -176,7 +168,10 @@ fn load_str_with_import_reports_clearly() {
     let script = engine
         .load_str("import \"common\"\n\nfunc main() { double(21) }")
         .unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
 }
 
 #[test]
@@ -215,44 +210,50 @@ fn cache_invalidates_when_library_changes() {
 fn hot_reload_refreshes_imported_libraries() {
     let dir = TmpDir::new("reload_import");
     let lib = dir.write("lib/common.bk", "func double(n) { n * 2 }");
-    let main = dir.write(
-        "task.bk",
-        "import \"common\"\n\nfunc main() { double(21) }",
-    );
+    let main = dir.write("task.bk", "import \"common\"\n\nfunc main() { double(21) }");
 
     let engine = Engine::new().set_import_dir(dir.path().join("lib"));
     let mut script = engine.load_file(&main).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
 
     std::fs::write(&lib, "func double(n) { n * 100 }").unwrap();
     engine.reload(&mut script, &main).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(2100));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(2100)
+    );
 }
 
 #[test]
 fn cached_reload_invalidates_transitive_imports_and_missing_dependencies() {
     let dir = TmpDir::new("cache_transitive");
     let codec = dir.write("lib/codec.bk", "func enc(n) { n + 1 }");
-    let _net = dir.write(
-        "lib/net.bk",
-        "import \"codec\"\n\nfunc ping2() { enc(41) }",
-    );
-    let main = dir.write(
-        "task.bk",
-        "import \"net\"\n\nfunc main() { ping2() }",
-    );
+    let _net = dir.write("lib/net.bk", "import \"codec\"\n\nfunc ping2() { enc(41) }");
+    let main = dir.write("task.bk", "import \"net\"\n\nfunc main() { ping2() }");
 
     let engine = Engine::new().set_import_dir(dir.path().join("lib"));
     let mut script = engine.load_cached(&main).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
-    assert!(main.with_extension("sbc").exists(), "cache should be written");
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
+    assert!(
+        main.with_extension("sbc").exists(),
+        "cache should be written"
+    );
 
     // The changed file is imported by net.bk, not by the main script. The
     // dependency list must still include it, otherwise the stale .sbc would
     // keep serving the old answer.
     std::fs::write(&codec, "func enc(n) { n + 2 }").unwrap();
     engine.reload_cached(&mut script, &main).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(43));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(43)
+    );
 
     let fresh = engine.load_cached(&main).unwrap();
     assert_eq!(engine.call(&fresh, "main", vec![]).unwrap(), Value::I64(43));
@@ -274,10 +275,10 @@ fn cached_reload_invalidates_transitive_imports_and_missing_dependencies() {
 /// 依赖路径在测试里统一用正斜杠（Rust 字符串无需反斜杠转义，语义相同）。
 #[test]
 fn cache_decode_rejects_hostile_dependency_lists() {
-    use std::collections::HashMap;
-    use std::rc::Rc;
     use brook::cache;
     use brook::ir::Program;
+    use std::collections::HashMap;
+    use std::rc::Rc;
 
     let fp: cache::HostFingerprint = Vec::new();
     let base = brook::Script {
@@ -366,11 +367,18 @@ fn keyword_in_literal_or_comment_does_not_trigger_import_resolution() {
         "func important() { 3 }\nfunc main() { important() }",
     ] {
         let script = engine.load_str(src).unwrap();
-        assert!(script.deps.is_empty(), "no dependency should be loaded: {src}");
+        assert!(
+            script.deps.is_empty(),
+            "no dependency should be loaded: {src}"
+        );
     }
     assert_eq!(
         engine
-            .call(&engine.load_str("func main() { \"import\" }").unwrap(), "main", vec![])
+            .call(
+                &engine.load_str("func main() { \"import\" }").unwrap(),
+                "main",
+                vec![]
+            )
             .unwrap(),
         Value::Str(std::rc::Rc::from("import"))
     );
@@ -379,19 +387,27 @@ fn keyword_in_literal_or_comment_does_not_trigger_import_resolution() {
 #[test]
 fn virtual_names_work_without_touching_the_filesystem() {
     let engine = Engine::new().set_import_resolver(|name| {
-        Ok(format!("func from_lib() {{ {} }}", if name.contains('/') { 9 } else { 5 }))
+        Ok(format!(
+            "func from_lib() {{ {} }}",
+            if name.contains('/') { 9 } else { 5 }
+        ))
     });
     // '/' 名字在 Windows 上是非法的单文件名；作为虚拟 key 必须照常工作
     // （旧实现会先 canonicalize，失败后回退；这里验证不依赖那条回退）。
     let script = engine
-        .compile("import \"pkg/lib\"\nfunc main() { from_lib() }", "<virtual:main>")
+        .compile(
+            "import \"pkg/lib\"\nfunc main() { from_lib() }",
+            "<virtual:main>",
+        )
         .unwrap();
     assert_eq!(script.deps.len(), 1);
     assert!(!script.deps[0].2, "resolver deps are not file-backed");
     assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(9));
 
     // 无 import 的虚拟名同样正常，且依赖清单为空
-    let plain = engine.compile("func main() { 1 }", "<virtual:plain>").unwrap();
+    let plain = engine
+        .compile("func main() { 1 }", "<virtual:plain>")
+        .unwrap();
     assert!(plain.deps.is_empty());
     assert_eq!(engine.call(&plain, "main", vec![]).unwrap(), Value::I64(1));
 }

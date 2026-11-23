@@ -150,10 +150,15 @@ fn build_engine() -> Result<Engine> {
     register_fn!(e, "page_pick_all", (String) -> i64, |_sel: String| 12)?;
 
     // 动态数组 fails：Opaque<StrList> + 访问函数。
-    register_fn!(e, "list_new", () -> Opaque<StrList>, || StrList::new())?;
-    register_fn!(e, "list_push", (Opaque<StrList>, String), |l: Opaque<StrList>, s: String| {
-        l.get().0.borrow_mut().push(s);
-    })?;
+    register_fn!(e, "list_new", () -> Opaque<StrList>, StrList::new)?;
+    register_fn!(
+        e,
+        "list_push",
+        (Opaque<StrList>, String),
+        |l: Opaque<StrList>, s: String| {
+            l.get().0.borrow_mut().push(s);
+        }
+    )?;
     register_fn!(e, "list_len", (Opaque<StrList>) -> i64, |l: Opaque<StrList>| {
         l.get().0.borrow().len() as i64
     })?;
@@ -276,6 +281,11 @@ fn browser_pick_rewritten_to_brook() -> Result<()> {
     let script = engine.load_str(SCRIPT)?;
     let failed = engine.call(&script, "main", vec![])?;
     // 原脚本 12 组断言全部应通过 -> 失败列表长度为 0
-    assert_eq!(failed, Value::I64(0), "改写后的脚本应全绿，实际失败条数：{:?}", failed);
+    assert_eq!(
+        failed,
+        Value::I64(0),
+        "改写后的脚本应全绿，实际失败条数：{:?}",
+        failed
+    );
     Ok(())
 }

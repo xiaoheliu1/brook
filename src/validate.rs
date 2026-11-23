@@ -19,7 +19,10 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
         let nregs = f.nregs as usize;
         let code_len = f.code.len();
         if code_len == 0 {
-            return Err(Error::io(format!("validate: `{}` has no instructions", f.name)));
+            return Err(Error::io(format!(
+                "validate: `{}` has no instructions",
+                f.name
+            )));
         }
         // 参数写入上界是 params.len()（`Vm::call` 把实参放进窗口前段），
         // 而寄存器窗口只有 nregs 格。编译产物恒满足（nregs 从 params 起算），
@@ -54,7 +57,11 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
         };
         let regs_ok = |v: &Regs, role: &str| -> Result<()> {
             if v.len() > MAX_OPERANDS {
-                return Err(bad(format!("{role} has {} operands (max {})", v.len(), MAX_OPERANDS)));
+                return Err(bad(format!(
+                    "{role} has {} operands (max {})",
+                    v.len(),
+                    MAX_OPERANDS
+                )));
             }
             for i in 0..v.len() {
                 reg(v.get(i), role)?;
@@ -147,7 +154,7 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
                 | Op::JmpIfLtF64 { a, b, target: t }
                 | Op::JmpIfLeF64 { a, b, target: t }
                 | Op::JmpIfGtF64 { a, b, target: t }
-                |                 Op::JmpIfGeF64 { a, b, target: t } => {
+                | Op::JmpIfGeF64 { a, b, target: t } => {
                     reg(a, "a")?;
                     reg(b, "b")?;
                     target(t)?;
@@ -165,7 +172,10 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
 
                 Op::CallScript { func, args, dst } => {
                     if func as usize >= program.funcs.len() {
-                        return Err(bad(format!("ins {i}: script function id {} out of range", func)));
+                        return Err(bad(format!(
+                            "ins {i}: script function id {} out of range",
+                            func
+                        )));
                     }
                     // Structural safety bound only: the caller copies argv
                     // into the callee's window `[nbase, nbase + nregs)`, so
@@ -188,7 +198,10 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
                 }
                 Op::CallHost { func, args, dst } => {
                     if func as usize >= nhosts {
-                        return Err(bad(format!("ins {i}: host function id {} out of range ({nhosts} registered)", func)));
+                        return Err(bad(format!(
+                            "ins {i}: host function id {} out of range ({nhosts} registered)",
+                            func
+                        )));
                     }
                     regs_ok(&args, "args")?;
                     reg(dst, "dst")?;
@@ -200,12 +213,20 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
                     regs_ok(&args, "args")?;
                     reg(dst, "dst")?;
                 }
-                Op::ContainsTyped { hay, needle, dst, ty } => {
+                Op::ContainsTyped {
+                    hay,
+                    needle,
+                    dst,
+                    ty,
+                } => {
                     reg(hay, "hay")?;
                     reg(needle, "needle")?;
                     reg(dst, "dst")?;
                     if ty as usize >= program.types.len() {
-                        return Err(bad(format!("ins {i}: contains type id {} out of range", ty)));
+                        return Err(bad(format!(
+                            "ins {i}: contains type id {} out of range",
+                            ty
+                        )));
                     }
                 }
 

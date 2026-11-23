@@ -68,7 +68,10 @@ impl Checker {
             }
             if self.sigs.contains_key(&f.name) {
                 return Err(Error::type_error(
-                    format!("function `{}` is already defined (duplicate definition)", f.name),
+                    format!(
+                        "function `{}` is already defined (duplicate definition)",
+                        f.name
+                    ),
                     f.span,
                 ));
             }
@@ -140,12 +143,8 @@ impl Checker {
         let body_ty = self.infer_block(&f.body)?;
         if let Some(t) = body_ty {
             let span = f.body.span;
-            self.unify(&sig.ret, &t, span).map_err(|e| {
-                Error::type_error(
-                    format!("function `{}`: {}", f.name, e),
-                    span,
-                )
-            })?;
+            self.unify(&sig.ret, &t, span)
+                .map_err(|e| Error::type_error(format!("function `{}`: {}", f.name, e), span))?;
         }
         self.scopes.pop();
         Ok(())
@@ -172,7 +171,9 @@ impl Checker {
         }
     }
 
-    fn unify(&mut self, a: &Ty, b: &Ty, span: Span) -> std::result::Result<(), String> {
+    // `span` 目前只透传给递归，错误信息不含位置；保留参数位以便将来加定位
+    // 时不必改 20+ 个调用点。clippy: only-used-in-recursion → 下划线标注。
+    fn unify(&mut self, a: &Ty, b: &Ty, _span: Span) -> std::result::Result<(), String> {
         let a = self.resolve(a);
         let b = self.resolve(b);
         match (a, b) {
@@ -192,15 +193,23 @@ impl Checker {
             (Ty::Handle(x), Ty::Handle(y)) if x == y => Ok(()),
             (Ty::Tuple(xs), Ty::Tuple(ys)) => {
                 if xs.len() != ys.len() {
-                    return Err(format!("tuple arity mismatch: {} vs {}", xs.len(), ys.len()));
+                    return Err(format!(
+                        "tuple arity mismatch: {} vs {}",
+                        xs.len(),
+                        ys.len()
+                    ));
                 }
                 for (x, y) in xs.iter().zip(ys.iter()) {
-                    self.unify(x, y, span)?;
+                    self.unify(x, y, _span)?;
                 }
                 Ok(())
             }
-            (Ty::Arr(x), Ty::Arr(y)) => self.unify(&x, &y, span),
-            (x, y) => Err(format!("type mismatch: expected {}, found {}", x.render(), y.render())),
+            (Ty::Arr(x), Ty::Arr(y)) => self.unify(&x, &y, _span),
+            (x, y) => Err(format!(
+                "type mismatch: expected {}, found {}",
+                x.render(),
+                y.render()
+            )),
         }
     }
 
@@ -257,7 +266,12 @@ impl Checker {
 
     fn infer_stmt(&mut self, stmt: &Stmt) -> Result<Option<Ty>> {
         match stmt {
-            Stmt::Let { name, ty, init, span } => {
+            Stmt::Let {
+                name,
+                ty,
+                init,
+                span,
+            } => {
                 let it = self.infer_expr(init)?;
                 if let Some(ann) = ty {
                     self.unify(ann, &it, *span)
@@ -287,8 +301,9 @@ impl Checker {
                         ));
                     }
                 }
-                self.unify(&old, &vt, *span)
-                    .map_err(|e| Error::type_error(format!("assignment to `{}`: {}", name, e), *span))?;
+                self.unify(&old, &vt, *span).map_err(|e| {
+                    Error::type_error(format!("assignment to `{}`: {}", name, e), *span)
+                })?;
                 Ok(Some(Ty::Unit))
             }
             Stmt::Expr(e) => Ok(Some(self.infer_expr(e)?)),
@@ -301,7 +316,12 @@ impl Checker {
                     .map_err(|e| Error::type_error(format!("return: {}", e), *span))?;
                 Ok(None)
             }
-            Stmt::If { cond, then, otherwise, span } => {
+            Stmt::If {
+                cond,
+                then,
+                otherwise,
+                span,
+            } => {
                 let ct = self.infer_expr(cond)?;
                 self.unify(&Ty::Bool, &ct, *span)
                     .map_err(|e| Error::type_error(format!("if condition: {}", e), *span))?;
@@ -328,15 +348,22 @@ impl Checker {
                 body_res?;
                 Ok(Some(Ty::Unit))
             }
-            Stmt::For { var, iter, body, span } => {
+            Stmt::For {
+                var,
+                iter,
+                body,
+                span,
+            } => {
                 let var_ty = match iter {
                     ForIter::Range { start, end } => {
                         let st = self.infer_expr(start)?;
                         let et = self.infer_expr(end)?;
-                        self.unify(&Ty::I64, &st, *span)
-                            .map_err(|e| Error::type_error(format!("for range start: {}", e), *span))?;
-                        self.unify(&Ty::I64, &et, *span)
-                            .map_err(|e| Error::type_error(format!("for range end: {}", e), *span))?;
+                        self.unify(&Ty::I64, &st, *span).map_err(|e| {
+                            Error::type_error(format!("for range start: {}", e), *span)
+                        })?;
+                        self.unify(&Ty::I64, &et, *span).map_err(|e| {
+                            Error::type_error(format!("for range end: {}", e), *span)
+                        })?;
                         Ty::I64
                     }
                     ForIter::List(e) => {
@@ -349,7 +376,9 @@ impl Checker {
                             Ty::Var(_) => {
                                 let elem = self.fresh();
                                 self.unify(&it, &Ty::Arr(Box::new(elem.clone())), *span)
-                                    .map_err(|e| Error::type_error(format!("for-in: {}", e), *span))?;
+                                    .map_err(|e| {
+                                        Error::type_error(format!("for-in: {}", e), *span)
+                                    })?;
                                 elem
                             }
                             other => {
@@ -367,7 +396,8 @@ impl Checker {
                 };
                 self.push_scope();
                 self.bind(var, var_ty);
-                self.active_for_vars.push((var.clone(), self.scopes.len() - 1));
+                self.active_for_vars
+                    .push((var.clone(), self.scopes.len() - 1));
                 self.loop_depth += 1;
                 let body_res = self.infer_block(body);
                 self.loop_depth -= 1;
@@ -385,7 +415,10 @@ impl Checker {
     /// lets the branch merger absorb that path exactly like `return`.
     fn check_loop_jump(&self, kw: &str, span: Span) -> Result<Option<Ty>> {
         if self.loop_depth == 0 {
-            return Err(Error::type_error(format!("`{}` outside of a loop", kw), span));
+            return Err(Error::type_error(
+                format!("`{}` outside of a loop", kw),
+                span,
+            ));
         }
         Ok(None)
     }
@@ -394,12 +427,7 @@ impl Checker {
     /// absorbed by the other branch. When both produce a value they are
     /// unified so freshly-inferred `Var`s (e.g. in tuple elements) converge
     /// instead of comparing unequal and collapsing to `Unit`.
-    fn merge_branches(
-        &mut self,
-        a: Option<Ty>,
-        b: Option<Ty>,
-        span: Span,
-    ) -> Result<Option<Ty>> {
+    fn merge_branches(&mut self, a: Option<Ty>, b: Option<Ty>, span: Span) -> Result<Option<Ty>> {
         match (a, b) {
             (None, x) | (x, None) => Ok(x),
             (Some(x), Some(y)) => {
@@ -418,9 +446,9 @@ impl Checker {
             Expr::Float(..) => Ok(Ty::F64),
             Expr::Bool(..) => Ok(Ty::Bool),
             Expr::Str(..) => Ok(Ty::Str),
-            Expr::Var(name, span) => self.lookup(name).ok_or_else(|| {
-                Error::type_error(format!("undefined variable `{}`", name), *span)
-            }),
+            Expr::Var(name, span) => self
+                .lookup(name)
+                .ok_or_else(|| Error::type_error(format!("undefined variable `{}`", name), *span)),
             Expr::Call { name, args, span } => self.infer_call(name, args, *span),
             Expr::Unary { op, expr, span } => {
                 let t = self.infer_expr(expr)?;
@@ -442,11 +470,7 @@ impl Checker {
                 let lt = self.infer_expr(lhs)?;
                 let rt = self.infer_expr(rhs)?;
                 match op {
-                    BinOp::Add
-                    | BinOp::Sub
-                    | BinOp::Mul
-                    | BinOp::Div
-                    | BinOp::Mod => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                         self.unify(&lt, &rt, *span)
                             .map_err(|e| Error::type_error(format!("arithmetic: {}", e), *span))?;
                         let t = self.resolve(&lt);
@@ -505,7 +529,12 @@ impl Checker {
                     }
                 }
             }
-            Expr::IfExpr { cond, then, otherwise, span } => {
+            Expr::IfExpr {
+                cond,
+                then,
+                otherwise,
+                span,
+            } => {
                 let ct = self.infer_expr(cond)?;
                 self.unify(&Ty::Bool, &ct, *span)
                     .map_err(|e| Error::type_error(format!("if condition: {}", e), *span))?;
@@ -619,7 +648,12 @@ impl Checker {
         if let Some(arity) = numeric_builtin_arity(name) {
             if args.len() != arity {
                 return Err(Error::type_error(
-                    format!("`{}` expects {} argument(s), got {}", name, arity, args.len()),
+                    format!(
+                        "`{}` expects {} argument(s), got {}",
+                        name,
+                        arity,
+                        args.len()
+                    ),
                     span,
                 ));
             }
@@ -636,7 +670,11 @@ impl Checker {
             let float_evident = known.iter().any(|t| matches!(t, Ty::F64));
             // A str/bool/tuple matches neither branch and fails the unify below
             // with a message naming the builtin and the offending type.
-            let family = if int_evident && !float_evident { Ty::I64 } else { Ty::F64 };
+            let family = if int_evident && !float_evident {
+                Ty::I64
+            } else {
+                Ty::F64
+            };
             for t in &tys {
                 self.unify(&family, t, span)
                     .map_err(|e| Error::type_error(format!("{}: {}", name, e), span))?;
@@ -698,7 +736,10 @@ impl Checker {
                     Ok(Ty::I64)
                 }
                 other => Err(Error::type_error(
-                    format!("len expects a str, tuple or array, found {}", other.render()),
+                    format!(
+                        "len expects a str, tuple or array, found {}",
+                        other.render()
+                    ),
                     span,
                 )),
             };
@@ -756,7 +797,10 @@ impl Checker {
                 let at = self.infer_expr(arg)?;
                 if is_to_str {
                     let resolved = self.resolve(&at);
-                    if matches!(resolved, Ty::Tuple(_) | Ty::Arr(_) | Ty::Handle(_) | Ty::Unit) {
+                    if matches!(
+                        resolved,
+                        Ty::Tuple(_) | Ty::Arr(_) | Ty::Handle(_) | Ty::Unit
+                    ) {
                         return Err(Error::type_error(
                             format!("to_str does not support {}", resolved.render()),
                             span,
@@ -776,9 +820,11 @@ impl Checker {
             return Ok(ret);
         }
 
-        let sig = self.sigs.get(name).cloned().ok_or_else(|| {
-            Error::type_error(format!("undefined function `{}`", name), span)
-        })?;
+        let sig = self
+            .sigs
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::type_error(format!("undefined function `{}`", name), span))?;
         if sig.params.len() != args.len() {
             return Err(Error::type_error(
                 format!(
@@ -853,14 +899,14 @@ pub fn numeric_builtin_arity(name: &str) -> Option<usize> {
 /// Return type of a builtin given its stable id (see `ir::builtin`).
 pub fn builtin_ret(id: u8) -> Ty {
     match id {
-        0 | 1 | 2 | 3 | 4 | 5 | 6 => Ty::F64,   // abs sqrt floor ceil pow min max
-        7 => Ty::I64,                              // len
-        8 => Ty::Bool,                             // contains
-        9 | 12 | 13 | 14 | 15 => Ty::Str,         // substr + to_str variants
-        10 => Ty::I64,                             // to_i64
-        11 => Ty::F64,                             // to_f64
-        16 | 17 | 18 => Ty::I64,                   // abs/min/max on i64
-        19 => Ty::Unit,                            // push (ADR-018)
+        0..=6 => Ty::F64,                 // abs sqrt floor ceil pow min max
+        7 => Ty::I64,                     // len
+        8 => Ty::Bool,                    // contains
+        9 | 12 | 13 | 14 | 15 => Ty::Str, // substr + to_str variants
+        10 => Ty::I64,                    // to_i64
+        11 => Ty::F64,                    // to_f64
+        16..=18 => Ty::I64,               // abs/min/max on i64
+        19 => Ty::Unit,                   // push (ADR-018)
         _ => Ty::Unit,
     }
 }

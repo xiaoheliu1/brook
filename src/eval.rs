@@ -61,9 +61,10 @@ impl<'a> Interpreter<'a> {
 
     pub fn call(&mut self, name: &str, args: Vec<Value>) -> Result<Value> {
         // Coerce args to the function's declared parameter types when needed.
-        let sig = self.sigs.get(name).ok_or_else(|| {
-            Error::runtime(format!("unknown function `{}`", name))
-        })?;
+        let sig = self
+            .sigs
+            .get(name)
+            .ok_or_else(|| Error::runtime(format!("unknown function `{}`", name)))?;
         if sig.params.len() != args.len() {
             return Err(Error::runtime(format!(
                 "`{}` expects {} args, got {}",
@@ -78,9 +79,10 @@ impl<'a> Interpreter<'a> {
             .map(|(v, t)| coerce(v, t))
             .collect::<Result<Vec<_>>>()?;
 
-        let func = self.funcs.get(name).ok_or_else(|| {
-            Error::runtime(format!("`{}` is not a script function", name))
-        })?;
+        let func = self
+            .funcs
+            .get(name)
+            .ok_or_else(|| Error::runtime(format!("`{}` is not a script function", name)))?;
         self.invoke_script(func, coerced)
     }
 
@@ -90,7 +92,7 @@ impl<'a> Interpreter<'a> {
         }
         self.depth += 1;
         self.scopes.push(HashMap::new());
-        for (p, v) in func.params.iter().zip(args.into_iter()) {
+        for (p, v) in func.params.iter().zip(args) {
             self.scopes.last_mut().unwrap().insert(p.name.clone(), v);
         }
         let result = match self.exec_block(&func.body)? {
@@ -167,7 +169,12 @@ impl<'a> Interpreter<'a> {
                 };
                 Ok(Flow::Return(v))
             }
-            Stmt::If { cond, then, otherwise, .. } => {
+            Stmt::If {
+                cond,
+                then,
+                otherwise,
+                ..
+            } => {
                 if self.eval_expr(cond)?.as_bool()? {
                     self.exec_block(then)
                 } else {
@@ -192,7 +199,9 @@ impl<'a> Interpreter<'a> {
                 }
                 Ok(Flow::Normal(Value::Unit))
             }
-            Stmt::For { var, iter, body, .. } => match iter {
+            Stmt::For {
+                var, iter, body, ..
+            } => match iter {
                 ForIter::Range { start, end } => {
                     let s = self.eval_expr(start)?.as_i64()?;
                     let e = self.eval_expr(end)?.as_i64()?;
@@ -200,7 +209,10 @@ impl<'a> Interpreter<'a> {
                     while i < e {
                         self.tick(body.span)?;
                         self.scopes.push(HashMap::new());
-                        self.scopes.last_mut().unwrap().insert(var.clone(), Value::I64(i));
+                        self.scopes
+                            .last_mut()
+                            .unwrap()
+                            .insert(var.clone(), Value::I64(i));
                         let flow = self.exec_block(body);
                         self.scopes.pop();
                         match flow? {
@@ -208,7 +220,9 @@ impl<'a> Interpreter<'a> {
                             Flow::Break => break,
                             Flow::Return(v) => return Ok(Flow::Return(v)),
                         }
-                        i = i.checked_add(1).ok_or_else(|| Error::runtime("for loop counter overflow"))?;
+                        i = i
+                            .checked_add(1)
+                            .ok_or_else(|| Error::runtime("for loop counter overflow"))?;
                     }
                     Ok(Flow::Normal(Value::Unit))
                 }
@@ -304,7 +318,12 @@ impl<'a> Interpreter<'a> {
                 let r = self.eval_expr(rhs)?;
                 self.eval_binary(*op, l, r, *span)
             }
-            Expr::IfExpr { cond, then, otherwise, span } => {
+            Expr::IfExpr {
+                cond,
+                then,
+                otherwise,
+                span,
+            } => {
                 if self.eval_expr(cond)?.as_bool()? {
                     flow_to_value(self.exec_block(then)?, *span)
                 } else {
@@ -395,7 +414,10 @@ impl<'a> Interpreter<'a> {
             return self.call(name, vals);
         }
 
-        Err(Error::runtime_at(format!("undefined function `{}`", name), span))
+        Err(Error::runtime_at(
+            format!("undefined function `{}`", name),
+            span,
+        ))
     }
 
     fn eval_binary(&self, op: BinOp, l: Value, r: Value, span: Span) -> Result<Value> {
@@ -403,16 +425,33 @@ impl<'a> Interpreter<'a> {
         // Integer path
         if let (Value::I64(a), Value::I64(b)) = (&l, &r) {
             return match op {
-                Add => a.checked_add(*b).map(Value::I64).ok_or_else(|| Error::runtime_at("i64 add overflow", span)),
-                Sub => a.checked_sub(*b).map(Value::I64).ok_or_else(|| Error::runtime_at("i64 sub overflow", span)),
-                Mul => a.checked_mul(*b).map(Value::I64).ok_or_else(|| Error::runtime_at("i64 mul overflow", span)),
+                Add => a
+                    .checked_add(*b)
+                    .map(Value::I64)
+                    .ok_or_else(|| Error::runtime_at("i64 add overflow", span)),
+                Sub => a
+                    .checked_sub(*b)
+                    .map(Value::I64)
+                    .ok_or_else(|| Error::runtime_at("i64 sub overflow", span)),
+                Mul => a
+                    .checked_mul(*b)
+                    .map(Value::I64)
+                    .ok_or_else(|| Error::runtime_at("i64 mul overflow", span)),
                 Div => {
-                    if *b == 0 { return Err(Error::runtime_at("division by zero", span)); }
-                    a.checked_div(*b).map(Value::I64).ok_or_else(|| Error::runtime_at("i64 div overflow", span))
+                    if *b == 0 {
+                        return Err(Error::runtime_at("division by zero", span));
+                    }
+                    a.checked_div(*b)
+                        .map(Value::I64)
+                        .ok_or_else(|| Error::runtime_at("i64 div overflow", span))
                 }
                 Mod => {
-                    if *b == 0 { return Err(Error::runtime_at("modulo by zero", span)); }
-                    a.checked_rem(*b).map(Value::I64).ok_or_else(|| Error::runtime_at("i64 mod overflow", span))
+                    if *b == 0 {
+                        return Err(Error::runtime_at("modulo by zero", span));
+                    }
+                    a.checked_rem(*b)
+                        .map(Value::I64)
+                        .ok_or_else(|| Error::runtime_at("i64 mod overflow", span))
                 }
                 Eq => Ok(Value::Bool(a == b)),
                 NotEq => Ok(Value::Bool(a != b)),
@@ -430,7 +469,10 @@ impl<'a> Interpreter<'a> {
             return match op {
                 Eq => Ok(Value::Bool(a == b)),
                 NotEq => Ok(Value::Bool(a != b)),
-                _ => Err(Error::runtime_at("ordering requires numbers or str, found bool", span)),
+                _ => Err(Error::runtime_at(
+                    "ordering requires numbers or str, found bool",
+                    span,
+                )),
             };
         }
         // Handle identity — same semantics as the VM's EqHandle: object
@@ -469,11 +511,15 @@ impl<'a> Interpreter<'a> {
             Sub => Ok(Value::F64(a - b)),
             Mul => Ok(Value::F64(a * b)),
             Div => {
-                if b == 0.0 { return Err(Error::runtime_at("division by zero", span)); }
+                if b == 0.0 {
+                    return Err(Error::runtime_at("division by zero", span));
+                }
                 Ok(Value::F64(a / b))
             }
             Mod => {
-                if b == 0.0 { return Err(Error::runtime_at("modulo by zero", span)); }
+                if b == 0.0 {
+                    return Err(Error::runtime_at("modulo by zero", span));
+                }
                 Ok(Value::F64(a % b))
             }
             Eq => Ok(Value::Bool(a == b)),
@@ -547,7 +593,10 @@ fn eval_builtin(name: &str, args: &[Value]) -> Result<Option<Value>> {
                 Value::Unit
             }
             v => {
-                return Err(Error::runtime(format!("push expects an array, found {}", v.ty())))
+                return Err(Error::runtime(format!(
+                    "push expects an array, found {}",
+                    v.ty()
+                )))
             }
         },
         "substr" if args.len() == 3 => {

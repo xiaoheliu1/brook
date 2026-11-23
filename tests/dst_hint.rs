@@ -23,10 +23,15 @@ fn binary_assignment_writes_target_slot_without_mov() -> brook::Result<()> {
         "assignment should emit AddI64 directly into x's slot: {code:?}"
     );
     assert!(
-        !code.iter().any(|i| matches!(i.op, Op::Mov { dst, .. } if dst == x)),
+        !code
+            .iter()
+            .any(|i| matches!(i.op, Op::Mov { dst, .. } if dst == x)),
         "the redundant Mov should be gone: {code:?}"
     );
-    assert_eq!(engine.call(&script, "f", vec![Value::I64(3), Value::I64(4)])?, Value::I64(7));
+    assert_eq!(
+        engine.call(&script, "f", vec![Value::I64(3), Value::I64(4)])?,
+        Value::I64(7)
+    );
     Ok(())
 }
 
@@ -36,12 +41,18 @@ fn hinted_slot_may_also_be_an_operand() -> brook::Result<()> {
     register_fn!(engine, "add1", (i64) -> i64, |x| x + 1)?;
 
     let self_alias = engine.load_str("func f(a) { let x = a\n x = x + 1\n x }")?;
-    assert_eq!(engine.call(&self_alias, "f", vec![Value::I64(5)])?, Value::I64(6));
+    assert_eq!(
+        engine.call(&self_alias, "f", vec![Value::I64(5)])?,
+        Value::I64(6)
+    );
 
     // `add1` gathers Values before the VM writes dst, so the second `x` in
     // `add1(x) + x` still reads the original slot.
     let host_alias = engine.load_str("func g(a) { let x = a\n x = add1(x) + x\n x }")?;
-    assert_eq!(engine.call(&host_alias, "g", vec![Value::I64(5)])?, Value::I64(11));
+    assert_eq!(
+        engine.call(&host_alias, "g", vec![Value::I64(5)])?,
+        Value::I64(11)
+    );
     Ok(())
 }
 
@@ -49,19 +60,31 @@ fn hinted_slot_may_also_be_an_operand() -> brook::Result<()> {
 fn fallback_nodes_keep_their_explicit_mov() -> brook::Result<()> {
     let engine = Engine::new();
     // `if` has its own result register; the hint must not leak into branches.
-    let branch = engine.load_str("func f(a, b, c) { let x = 0\n x = if c { a } else { b }\n x }")?;
+    let branch =
+        engine.load_str("func f(a, b, c) { let x = 0\n x = if c { a } else { b }\n x }")?;
     assert_eq!(
-        engine.call(&branch, "f", vec![Value::I64(3), Value::I64(4), Value::Bool(true)])?,
+        engine.call(
+            &branch,
+            "f",
+            vec![Value::I64(3), Value::I64(4), Value::Bool(true)]
+        )?,
         Value::I64(3)
     );
     assert_eq!(
-        engine.call(&branch, "f", vec![Value::I64(3), Value::I64(4), Value::Bool(false)])?,
+        engine.call(
+            &branch,
+            "f",
+            vec![Value::I64(3), Value::I64(4), Value::Bool(false)]
+        )?,
         Value::I64(4)
     );
 
     // Tuple construction likewise ignores the hint.
     let tuple = engine.load_str("func t(a, b) { let x = (0, 0)\n x = (a, b)\n x.1 }")?;
-    assert_eq!(engine.call(&tuple, "t", vec![Value::I64(3), Value::I64(9)])?, Value::I64(9));
+    assert_eq!(
+        engine.call(&tuple, "t", vec![Value::I64(3), Value::I64(9)])?,
+        Value::I64(9)
+    );
     Ok(())
 }
 

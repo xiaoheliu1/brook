@@ -7,7 +7,9 @@ use brook::{Engine, ErrorKind, Value};
 fn eval(src: &str) -> Value {
     let engine = Engine::new();
     let script = engine.load_str(src).expect("script should compile");
-    engine.call(&script, "f", vec![]).expect("script should run")
+    engine
+        .call(&script, "f", vec![])
+        .expect("script should run")
 }
 
 fn compile_err(src: &str) -> String {
@@ -51,7 +53,10 @@ fn not_operator() {
 /// runtime instead of returning `false` / `true`.
 #[test]
 fn and_short_circuits_on_false() {
-    assert_eq!(eval("func f() { false && (1 / 0 == 1) }"), Value::Bool(false));
+    assert_eq!(
+        eval("func f() { false && (1 / 0 == 1) }"),
+        Value::Bool(false)
+    );
 }
 
 #[test]
@@ -65,7 +70,9 @@ fn or_short_circuits_on_true() {
 #[test]
 fn probe_expression_really_fails_when_evaluated() {
     let engine = Engine::new();
-    let script = engine.load_str("func f() { true && (1 / 0 == 1) }").unwrap();
+    let script = engine
+        .load_str("func f() { true && (1 / 0 == 1) }")
+        .unwrap();
     let err = engine.call(&script, "f", vec![]).unwrap_err();
     assert_eq!(err.kind, ErrorKind::Runtime);
     assert!(
@@ -80,8 +87,14 @@ fn probe_expression_really_fails_when_evaluated() {
 #[test]
 fn and_binds_tighter_than_or() {
     // Parsed as `true || (false && false)`, not `(true || false) && false`.
-    assert_eq!(eval("func f() { true || false && false }"), Value::Bool(true));
-    assert_eq!(eval("func f() { false && false || true }"), Value::Bool(true));
+    assert_eq!(
+        eval("func f() { true || false && false }"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval("func f() { false && false || true }"),
+        Value::Bool(true)
+    );
 }
 
 #[test]
@@ -97,7 +110,10 @@ fn comparison_binds_tighter_than_logic() {
 #[test]
 fn logic_is_left_associative() {
     // `a && b && c` == `(a && b) && c`; all four orders agree.
-    assert_eq!(eval("func f() { true && true && false }"), Value::Bool(false));
+    assert_eq!(
+        eval("func f() { true && true && false }"),
+        Value::Bool(false)
+    );
     assert_eq!(
         eval("func f() { false || false || true }"),
         Value::Bool(true)

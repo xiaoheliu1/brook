@@ -125,16 +125,31 @@ impl Failure {
             ErrorKind::Runtime => MS_ERR_RUNTIME,
             _ => MS_ERR_ENGINE,
         };
-        Self { code, msg: e.to_string(), span: e.span, report }
+        Self {
+            code,
+            msg: e.to_string(),
+            span: e.span,
+            report,
+        }
     }
 
     /// The script ran but returned something this ABI cannot carry.
     fn contract(msg: impl Into<String>) -> Self {
-        Self { code: MS_ERR_ENGINE, msg: msg.into(), span: None, report: String::new() }
+        Self {
+            code: MS_ERR_ENGINE,
+            msg: msg.into(),
+            span: None,
+            report: String::new(),
+        }
     }
 
     fn null(msg: impl Into<String>) -> Self {
-        Self { code: MS_ERR_NULL, msg: msg.into(), span: None, report: String::new() }
+        Self {
+            code: MS_ERR_NULL,
+            msg: msg.into(),
+            span: None,
+            report: String::new(),
+        }
     }
 }
 
@@ -193,10 +208,12 @@ pub unsafe extern "C" fn ms_call_i64(
             let report = e.report(source, func);
             Failure::of_reported(e, report)
         })?;
-        let value = engine.call(&script, func, vec![Value::I64(arg)]).map_err(|e| {
-            let report = e.report(source, func);
-            Failure::of_reported(e, report)
-        })?;
+        let value = engine
+            .call(&script, func, vec![Value::I64(arg)])
+            .map_err(|e| {
+                let report = e.report(source, func);
+                Failure::of_reported(e, report)
+            })?;
         match value {
             Value::I64(n) => Ok(n),
             other => Err(Failure::contract(format!(
@@ -510,7 +527,11 @@ pub unsafe extern "C" fn ms_script_create(
     }
     let body = || -> Result<*mut MsScript, Failure> {
         let source = as_str(source)?;
-        let name = if name.is_null() { "<script>" } else { as_str(name)? };
+        let name = if name.is_null() {
+            "<script>"
+        } else {
+            as_str(name)?
+        };
         let engine = Engine::new();
         let script = engine.compile(source, name).map_err(|e| {
             let report = e.report(source, name);
@@ -555,7 +576,11 @@ pub unsafe extern "C" fn ms_script_create_cached(
     let body = || -> Result<*mut MsScript, Failure> {
         let source = as_str(source)?;
         let cache = as_str(cache_path)?;
-        let name = if name.is_null() { "<script>" } else { as_str(name)? };
+        let name = if name.is_null() {
+            "<script>"
+        } else {
+            as_str(name)?
+        };
         let engine = Engine::new();
         let script = engine.compile_cached(source, name, cache).map_err(|e| {
             let report = e.report(source, name);
@@ -618,7 +643,11 @@ pub unsafe extern "C" fn ms_script_call(
         }
         let mut values = Vec::with_capacity(nargs);
         for i in 0..nargs {
-            values.push(msval_to_value(args.add(i).as_ref().ok_or_else(|| Failure::null("null args pointer"))?)?);
+            values.push(msval_to_value(
+                args.add(i)
+                    .as_ref()
+                    .ok_or_else(|| Failure::null("null args pointer"))?,
+            )?);
         }
         let result = s.engine.call(&s.script, func, values).map_err(|e| {
             let report = e.report(&s.script.source, &s.script.name);

@@ -52,7 +52,11 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, depth: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
     }
 
     pub fn parse(mut self) -> Result<Program> {
@@ -88,9 +92,7 @@ impl Parser {
                 self.bump();
                 s
             }
-            TokenKind::Str(_) => {
-                return Err(Error::parse("import 路径不能为空", self.peek_span()))
-            }
+            TokenKind::Str(_) => return Err(Error::parse("import 路径不能为空", self.peek_span())),
             _ => {
                 return Err(Error::parse(
                     "expected import 路径字符串，如 \"common\"",
@@ -157,7 +159,10 @@ impl Parser {
                 self.bump();
                 Ok((s, span))
             }
-            _ => Err(Error::parse(format!("expected identifier, found {:?}", self.peek()), self.peek_span())),
+            _ => Err(Error::parse(
+                format!("expected identifier, found {:?}", self.peek()),
+                self.peek_span(),
+            )),
         }
     }
 
@@ -202,7 +207,11 @@ impl Parser {
                 } else {
                     None
                 };
-                params.push(Param { name: pname, ty, span: pspan });
+                params.push(Param {
+                    name: pname,
+                    ty,
+                    span: pspan,
+                });
                 self.eat_newlines();
                 if self.check(&TokenKind::Comma) {
                     self.bump();
@@ -224,7 +233,13 @@ impl Parser {
         self.eat_newlines();
         let body = self.parse_block()?;
         let span = start.to(body.span);
-        Ok(FuncDecl { name, params, ret, body, span })
+        Ok(FuncDecl {
+            name,
+            params,
+            ret,
+            body,
+            span,
+        })
     }
 
     /// 类型文法的深度守卫（D-046 3.3）。`parse_type` 递归产生嵌套
@@ -287,7 +302,10 @@ impl Parser {
                 self.expect(TokenKind::RBracket)?;
                 Ok(Ty::Arr(Box::new(elem)))
             }
-            _ => Err(Error::parse(format!("expected type, found {:?}", self.peek()), self.peek_span())),
+            _ => Err(Error::parse(
+                format!("expected type, found {:?}", self.peek()),
+                self.peek_span(),
+            )),
         }
     }
 
@@ -308,7 +326,10 @@ impl Parser {
         }
         let close = self.expect(TokenKind::RBrace)?.span;
         self.depth -= 1;
-        Ok(Block { stmts, span: open.to(close) })
+        Ok(Block {
+            stmts,
+            span: open.to(close),
+        })
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt> {
@@ -325,7 +346,12 @@ impl Parser {
                 };
                 self.expect(TokenKind::Assign)?;
                 let init = self.parse_expr()?;
-                Ok(Stmt::Let { name, ty, init, span: span.to(self.prev_span()) })
+                Ok(Stmt::Let {
+                    name,
+                    ty,
+                    init,
+                    span: span.to(self.prev_span()),
+                })
             }
             TokenKind::Return => {
                 self.bump();
@@ -334,15 +360,22 @@ impl Parser {
                 } else {
                     Some(self.parse_expr()?)
                 };
-                Ok(Stmt::Return { value, span: span.to(self.prev_span()) })
+                Ok(Stmt::Return {
+                    value,
+                    span: span.to(self.prev_span()),
+                })
             }
             TokenKind::Break => {
                 self.bump();
-                Ok(Stmt::Break { span: span.to(self.prev_span()) })
+                Ok(Stmt::Break {
+                    span: span.to(self.prev_span()),
+                })
             }
             TokenKind::Continue => {
                 self.bump();
-                Ok(Stmt::Continue { span: span.to(self.prev_span()) })
+                Ok(Stmt::Continue {
+                    span: span.to(self.prev_span()),
+                })
             }
             TokenKind::If => self.parse_if_stmt(),
             TokenKind::While => {
@@ -351,7 +384,11 @@ impl Parser {
                 self.eat_newlines();
                 let body = self.parse_block()?;
                 let end = body.span;
-                Ok(Stmt::While { cond, body, span: span.to(end) })
+                Ok(Stmt::While {
+                    cond,
+                    body,
+                    span: span.to(end),
+                })
             }
             TokenKind::For => {
                 self.bump();
@@ -372,13 +409,22 @@ impl Parser {
                 self.eat_newlines();
                 let body = self.parse_block()?;
                 let bend = body.span;
-                Ok(Stmt::For { var, iter, body, span: span.to(bend) })
+                Ok(Stmt::For {
+                    var,
+                    iter,
+                    body,
+                    span: span.to(bend),
+                })
             }
             TokenKind::Ident(_) if self.is_assignment_ahead() => {
                 let (name, _) = self.expect_ident()?;
                 self.expect(TokenKind::Assign)?;
                 let value = self.parse_expr()?;
-                Ok(Stmt::Assign { name, value, span: span.to(self.prev_span()) })
+                Ok(Stmt::Assign {
+                    name,
+                    value,
+                    span: span.to(self.prev_span()),
+                })
             }
             _ => {
                 let e = self.parse_expr()?;
@@ -398,7 +444,9 @@ impl Parser {
 
     /// Look ahead: `ident =` means assignment, otherwise a call/var expression.
     fn is_assignment_ahead(&self) -> bool {
-        self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::Assign)
+        self.tokens
+            .get(self.pos + 1)
+            .is_some_and(|t| t.kind == TokenKind::Assign)
     }
 
     fn parse_if_stmt(&mut self) -> Result<Stmt> {
@@ -415,7 +463,9 @@ impl Parser {
             if self.check(&TokenKind::If) {
                 // `else if` recurses without a block, so it needs its own
                 // entry: a long else-if ladder is as deep as a nested `if`.
-                Some(Box::new(ElseBranch::ElseIf(self.parse_if_stmt()?)))
+                Some(Box::new(ElseBranch::ElseIf(Box::new(
+                    self.parse_if_stmt()?,
+                ))))
             } else {
                 Some(Box::new(ElseBranch::Block(self.parse_block()?)))
             }
@@ -428,11 +478,19 @@ impl Parser {
             None => then.span,
         };
         self.depth -= 1;
-        Ok(Stmt::If { cond, then, otherwise, span: start.to(end) })
+        Ok(Stmt::If {
+            cond,
+            then,
+            otherwise,
+            span: start.to(end),
+        })
     }
 
     fn at_stmt_end(&self) -> bool {
-        matches!(self.peek(), TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof)
+        matches!(
+            self.peek(),
+            TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof
+        )
     }
 
     fn prev_span(&self) -> Span {
@@ -452,11 +510,7 @@ impl Parser {
     fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr> {
         let entry = self.depth;
         let mut lhs = self.parse_prefix()?;
-        loop {
-            let (op, l_bp, r_bp) = match self.binop_info() {
-                Some(info) => info,
-                None => break,
-            };
+        while let Some((op, l_bp, r_bp)) = self.binop_info() {
             if l_bp < min_bp {
                 break;
             }
@@ -470,7 +524,12 @@ impl Parser {
             self.enter(op_span)?;
             let rhs = self.parse_expr_bp(r_bp)?;
             let span = expr_span(&lhs).to(expr_span(&rhs));
-            lhs = Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), span: op_span.to(span) };
+            lhs = Expr::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+                span: op_span.to(span),
+            };
         }
         // Siblings start from the caller's depth, not from this chain's depth.
         self.depth = entry;
@@ -505,12 +564,20 @@ impl Parser {
             TokenKind::Minus => {
                 self.bump();
                 let e = self.parse_prefix()?;
-                Ok(Expr::Unary { op: UnOp::Neg, expr: Box::new(e), span: span.to(self.prev_span()) })
+                Ok(Expr::Unary {
+                    op: UnOp::Neg,
+                    expr: Box::new(e),
+                    span: span.to(self.prev_span()),
+                })
             }
             TokenKind::Bang => {
                 self.bump();
                 let e = self.parse_prefix()?;
-                Ok(Expr::Unary { op: UnOp::Not, expr: Box::new(e), span: span.to(self.prev_span()) })
+                Ok(Expr::Unary {
+                    op: UnOp::Not,
+                    expr: Box::new(e),
+                    span: span.to(self.prev_span()),
+                })
             }
             _ => self.parse_postfix(),
         };
@@ -532,7 +599,11 @@ impl Parser {
                 };
                 self.bump();
                 let span = expr_span(&e).to(idx_span);
-                e = Expr::Index { base: Box::new(e), index: idx, span };
+                e = Expr::Index {
+                    base: Box::new(e),
+                    index: idx,
+                    span,
+                };
             } else if self.check(&TokenKind::LBracket) {
                 // Array indexing `rows[i]` (ADR-018). Chained like `.n`
                 // postfix: `rows[i][j]` indexes the (nested) result again.
@@ -542,7 +613,11 @@ impl Parser {
                 self.eat_newlines();
                 let close = self.expect(TokenKind::RBracket)?.span;
                 let span = expr_span(&e).to(close);
-                e = Expr::DynIndex { base: Box::new(e), index: Box::new(idx), span };
+                e = Expr::DynIndex {
+                    base: Box::new(e),
+                    index: Box::new(idx),
+                    span,
+                };
             } else {
                 break;
             }
@@ -553,11 +628,26 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expr> {
         let span = self.peek_span();
         match self.peek().clone() {
-            TokenKind::Int(n) => { self.bump(); Ok(Expr::Int(n, span)) }
-            TokenKind::Float(f) => { self.bump(); Ok(Expr::Float(f, span)) }
-            TokenKind::Str(s) => { self.bump(); Ok(Expr::Str(s, span)) }
-            TokenKind::True => { self.bump(); Ok(Expr::Bool(true, span)) }
-            TokenKind::False => { self.bump(); Ok(Expr::Bool(false, span)) }
+            TokenKind::Int(n) => {
+                self.bump();
+                Ok(Expr::Int(n, span))
+            }
+            TokenKind::Float(f) => {
+                self.bump();
+                Ok(Expr::Float(f, span))
+            }
+            TokenKind::Str(s) => {
+                self.bump();
+                Ok(Expr::Str(s, span))
+            }
+            TokenKind::True => {
+                self.bump();
+                Ok(Expr::Bool(true, span))
+            }
+            TokenKind::False => {
+                self.bump();
+                Ok(Expr::Bool(false, span))
+            }
             TokenKind::Ident(name) => {
                 self.bump();
                 if self.check(&TokenKind::LParen) {
@@ -575,7 +665,11 @@ impl Parser {
                         }
                     }
                     let close = self.expect(TokenKind::RParen)?.span;
-                    Ok(Expr::Call { name, args, span: span.to(close) })
+                    Ok(Expr::Call {
+                        name,
+                        args,
+                        span: span.to(close),
+                    })
                 } else {
                     Ok(Expr::Var(name, span))
                 }
@@ -633,7 +727,10 @@ impl Parser {
                     // else-if as expression: wrap a single if-expression block.
                     let nested = self.parse_if_expr()?;
                     let bspan = expr_span(&nested);
-                    Block { stmts: vec![Stmt::Expr(nested)], span: bspan }
+                    Block {
+                        stmts: vec![Stmt::Expr(nested)],
+                        span: bspan,
+                    }
                 } else {
                     self.parse_block()?
                 };
@@ -677,7 +774,10 @@ impl Parser {
                 let close = self.expect(TokenKind::RBracket)?.span;
                 Ok(Expr::Array(items, span.to(close)))
             }
-            _ => Err(Error::parse(format!("unexpected token {:?} in expression", self.peek()), span)),
+            _ => Err(Error::parse(
+                format!("unexpected token {:?} in expression", self.peek()),
+                span,
+            )),
         }
     }
 
@@ -685,7 +785,6 @@ impl Parser {
         // Entry point with the leading `if` already unconsumed.
         self.parse_primary()
     }
-
 }
 
 fn expr_span(e: &Expr) -> Span {

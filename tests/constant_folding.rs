@@ -24,7 +24,11 @@ fn eval(src: &str, args: Vec<Value>) -> Value {
 fn count<F: Fn(&Op) -> bool>(src: &str, pred: F) -> usize {
     let engine = Engine::new();
     let script = engine.load_str(src).expect("script must compile");
-    script.code.funcs[0].code.iter().filter(|i| pred(&i.op)).count()
+    script.code.funcs[0]
+        .code
+        .iter()
+        .filter(|i| pred(&i.op))
+        .count()
 }
 
 #[test]
@@ -48,7 +52,10 @@ fn shallow_literal_ops_collapse_and_deep_trees_stay_correct() {
 
 #[test]
 fn float_and_bool_literal_trees_fold() {
-    assert_eq!(eval("func f() { 1.5 * 2.0 + 0.5 }", vec![]), Value::F64(3.5));
+    assert_eq!(
+        eval("func f() { 1.5 * 2.0 + 0.5 }", vec![]),
+        Value::F64(3.5)
+    );
     assert_eq!(eval("func f() { !(1 < 2) }", vec![]), Value::Bool(false));
     assert_eq!(
         eval("func f() { (2 == 2) && (3 > 4) }", vec![]),
@@ -63,16 +70,26 @@ fn constant_operand_uses_immediate_opcode() {
     // `2 + x` commutes; `x + (3+4)` has its RHS folded first. Both must become
     // AddI64Imm rather than a materialised literal + AddI64.
     let src = "func f(x) { 2 + x + (3 + 4) }";
-    assert_eq!(count(src, |op| matches!(op, Op::AddI64Imm { .. })), 2, "expected two immediates");
+    assert_eq!(
+        count(src, |op| matches!(op, Op::AddI64Imm { .. })),
+        2,
+        "expected two immediates"
+    );
     assert_eq!(count(src, |op| matches!(op, Op::AddI64 { .. })), 0);
-    assert_eq!(count(src, |op| matches!(op, Op::ConstI64 { val: 7, .. })), 0);
+    assert_eq!(
+        count(src, |op| matches!(op, Op::ConstI64 { val: 7, .. })),
+        0
+    );
     assert_eq!(eval(src, vec![Value::I64(5)]), Value::I64(14));
 }
 
 #[test]
 fn subtraction_by_folded_constant_uses_add_immediate() {
     let src = "func f(x) { x - (2 + 3) }";
-    assert_eq!(count(src, |op| matches!(op, Op::AddI64Imm { imm: -5, .. })), 1);
+    assert_eq!(
+        count(src, |op| matches!(op, Op::AddI64Imm { imm: -5, .. })),
+        1
+    );
     assert_eq!(count(src, |op| matches!(op, Op::SubI64 { .. })), 0);
     assert_eq!(eval(src, vec![Value::I64(10)]), Value::I64(5));
 }
@@ -80,7 +97,10 @@ fn subtraction_by_folded_constant_uses_add_immediate() {
 #[test]
 fn fused_branch_recognises_folded_literal() {
     let src = "func f(n) { if n < 2 + 3 { 1 } else { 0 } }";
-    assert_eq!(count(src, |op| matches!(op, Op::JmpIfGeI64Imm { imm: 5, .. })), 1);
+    assert_eq!(
+        count(src, |op| matches!(op, Op::JmpIfGeI64Imm { imm: 5, .. })),
+        1
+    );
     assert_eq!(eval(src, vec![Value::I64(4)]), Value::I64(1));
     assert_eq!(eval(src, vec![Value::I64(5)]), Value::I64(0));
 }
@@ -95,7 +115,9 @@ fn checked_failures_stay_runtime_errors() {
     ];
     for (src, expected) in cases {
         let engine = Engine::new();
-        let script = engine.load_str(src).expect("a bad constant must still compile");
+        let script = engine
+            .load_str(src)
+            .expect("a bad constant must still compile");
         let msg = engine
             .call(&script, "f", vec![])
             .expect_err("error must surface at runtime")
@@ -128,5 +150,8 @@ fn folding_does_not_remove_calls_or_allocations() {
     let mut engine = Engine::new();
     brook::register_fn!(engine, "bump", (i64) -> i64, |x| x + 1).unwrap();
     let script = engine.load_str("func f(x) { bump(x) * 0 }").unwrap();
-    assert_eq!(engine.call(&script, "f", vec![Value::I64(41)]).unwrap(), Value::I64(0));
+    assert_eq!(
+        engine.call(&script, "f", vec![Value::I64(41)]).unwrap(),
+        Value::I64(0)
+    );
 }

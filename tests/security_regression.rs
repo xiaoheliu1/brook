@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 /// 1. 恶意 `.sbc`：200 个参数塞进 1 格寄存器窗口。编译产物不可能产生
-/// （codegen 的 nregs 从 params 起算），必须由 validate 结构性拒绝——
-/// 否则 `Vm::call` 会把实参写到窗口之外的堆内存（unchecked 写，无 panic）。
+///    （codegen 的 nregs 从 params 起算），必须由 validate 结构性拒绝——
+///    否则 `Vm::call` 会把实参写到窗口之外的堆内存（unchecked 写，无 panic）。
 #[test]
 fn hostile_sbc_rejects_params_over_register_window() {
     let code = Program {
@@ -40,7 +40,10 @@ fn hostile_sbc_rejects_params_over_register_window() {
     let script = Script {
         sigs: HashMap::from([(
             "f".to_string(),
-            brook::typecheck::FuncSig { params: vec![Ty::I64; 200], ret: Ty::I64 },
+            brook::typecheck::FuncSig {
+                params: vec![Ty::I64; 200],
+                ret: Ty::I64,
+            },
         )]),
         code,
         name: "hostile".into(),
@@ -61,9 +64,9 @@ fn hostile_sbc_rejects_params_over_register_window() {
 }
 
 /// 2. `Vm` 是 pub 的 safe API，但错误路径刻意保留 frames、成功路径的底帧
-/// 也不 pop——复用同一个 `Vm` 第二次 call 时，`Ret` 会恢复上一次调用的
-/// 帧（旧 code/ip），而寄存器窗口已按新函数缩小：旧 code 的 `dst` 可能
-/// 落在窗口之外（unchecked 写）。重置防护后，复用必须像新 `Vm` 一样工作。
+///    也不 pop——复用同一个 `Vm` 第二次 call 时，`Ret` 会恢复上一次调用的
+///    帧（旧 code/ip），而寄存器窗口已按新函数缩小：旧 code 的 `dst` 可能
+///    落在窗口之外（unchecked 写）。重置防护后，复用必须像新 `Vm` 一样工作。
 #[test]
 fn vm_reuse_after_call_is_clean() {
     // big 的寄存器窗口远大于 f 的；修复前第二次 call(f) 的 Ret 会切回
@@ -94,9 +97,9 @@ func f() { 42 }
 }
 
 /// 3. 类型文法的深度守卫：`let x: ((((...i64...)))) = 1` 的递归
-/// `parse_type` 不受表达式侧 `MAX_NESTING` 保护，2 万层（约 40 KB）足以
-/// 栈溢出 abort——`catch_unwind` 抓不住。这里 80 层（> 64 上限）必须
-/// 得到解析错误而不是崩溃。
+///    `parse_type` 不受表达式侧 `MAX_NESTING` 保护，2 万层（约 40 KB）足以
+///    栈溢出 abort——`catch_unwind` 抓不住。这里 80 层（> 64 上限）必须
+///    得到解析错误而不是崩溃。
 #[test]
 fn deep_nested_type_annotation_is_rejected() {
     let depth = 80;
@@ -111,15 +114,11 @@ fn deep_nested_type_annotation_is_rejected() {
     src.push_str(" = 1  x }");
     let engine = Engine::new();
     let err = engine.load_str(&src).unwrap_err();
-    assert!(
-        err.message.contains("nesting too deep"),
-        "{}",
-        err.message
-    );
+    assert!(err.message.contains("nesting too deep"), "{}", err.message);
 }
 
 /// 4. 缓存侧同一条洞：`.sbc` 里每层嵌套类型只花 5 字节，1 MiB 能编码
-/// 20 万层——`read_ty` 的递归必须被显式深度上限拦住，返回 Err 而非 abort。
+///    20 万层——`read_ty` 的递归必须被显式深度上限拦住，返回 Err 而非 abort。
 #[test]
 fn deep_nested_type_in_cache_is_rejected() {
     // 手工构造 100 层嵌套的 Ty（构造侧安全：100 层的 Drop 无风险）
@@ -145,7 +144,10 @@ fn deep_nested_type_in_cache_is_rejected() {
     let script = Script {
         sigs: HashMap::from([(
             "f".to_string(),
-            brook::typecheck::FuncSig { params: vec![], ret: ty },
+            brook::typecheck::FuncSig {
+                params: vec![],
+                ret: ty,
+            },
         )]),
         code,
         name: "deep".into(),
@@ -166,8 +168,8 @@ fn deep_nested_type_in_cache_is_rejected() {
 }
 
 /// 5. 热重载必须同步更新依赖清单：漏掉时 save_sbc 会把【旧 deps】写进
-/// 缓存，compile_cached 随后依据错误路径/哈希判定"新鲜"而服役旧字节码
-/// （典型触发：reload 前后宿主换了 import_dir）。
+///    缓存，compile_cached 随后依据错误路径/哈希判定"新鲜"而服役旧字节码
+///    （典型触发：reload 前后宿主换了 import_dir）。
 #[test]
 fn reload_updates_dependency_list() {
     use std::path::PathBuf;
@@ -183,16 +185,24 @@ fn reload_updates_dependency_list() {
 
     let mut engine = Engine::new().set_import_dir(&lib_a);
     let mut script = engine.load_file(&main).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
 
     // 换目录后 reload：新依赖应指向 b/，旧依赖（a/）必须被替换
     engine = engine.set_import_dir(&lib_b);
     engine.reload(&mut script, &main).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(2100));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(2100)
+    );
     let dep_paths: Vec<&String> = script.deps.iter().map(|(p, _, _)| p).collect();
     let sep = std::path::MAIN_SEPARATOR;
     assert!(
-        dep_paths.iter().any(|p| p.ends_with(&format!("b{sep}common.bk")) || p.ends_with("b/common.bk")),
+        dep_paths
+            .iter()
+            .any(|p| p.ends_with(&format!("b{sep}common.bk")) || p.ends_with("b/common.bk")),
         "deps should point at the new import dir: {:?}",
         dep_paths
     );
@@ -201,8 +211,8 @@ fn reload_updates_dependency_list() {
 }
 
 /// 6. `substr` 的巨大 start：64 位上行为必须稳定返回空串；修复前
-/// `start + len` 的加法在 32 位目标（armeabi-v7a）上因 `i64::MAX as usize`
-/// 截断回绕导致 slice panic。新实现用 char_indices 定位，无加法。
+///    `start + len` 的加法在 32 位目标（armeabi-v7a）上因 `i64::MAX as usize`
+///    截断回绕导致 slice panic。新实现用 char_indices 定位，无加法。
 #[test]
 fn substr_huge_start_is_empty_not_panic() {
     let engine = Engine::new();
@@ -251,7 +261,10 @@ fn encode_program(
     let script = Script {
         sigs: HashMap::from([(
             name.to_string(),
-            brook::typecheck::FuncSig { params: params.clone(), ret: sig_ret },
+            brook::typecheck::FuncSig {
+                params: params.clone(),
+                ret: sig_ret,
+            },
         )]),
         code: prog,
         name: name.into(),
@@ -265,7 +278,7 @@ fn encode_program(
 }
 
 /// 5.7-1：解码签名含推断变量 → 拒绝。`type_matches` 的
-/// `(_, Ty::Var(_)) => true` 会放行任意值，函数体按 I64 位解释堆索引。
+///    `(_, Ty::Var(_)) => true` 会放行任意值，函数体按 I64 位解释堆索引。
 #[test]
 fn hostile_sbc_rejects_inference_variable_in_signature() {
     let bytes = encode_program(
@@ -302,7 +315,11 @@ fn hostile_sbc_rejects_signature_mismatch() {
         Ty::Str, // sigs 说返回 str，funcs 说 i64
     );
     let err = Engine::new().script_from_bytes(&bytes).unwrap_err();
-    assert!(err.message.contains("signature mismatch"), "{}", err.message);
+    assert!(
+        err.message.contains("signature mismatch"),
+        "{}",
+        err.message
+    );
 }
 
 /// 5.7-3：ids 非双射 → 拒绝（入口名映射到任意函数会静默调错代码）。
@@ -345,7 +362,7 @@ fn hostile_sbc_rejects_id_table_mismatch() {
 }
 
 /// 5.3：堆元组与签名元数不一致 → 运行时明确报错（旧实现 zip 截断静默丢
-/// 元素，且与参考解释器分歧）。
+///    元素，且与参考解释器分歧）。
 #[test]
 fn hostile_sbc_reports_tuple_arity_mismatch() {
     let bytes = encode_program(
@@ -357,7 +374,10 @@ fn hostile_sbc_reports_tuple_arity_mismatch() {
             Instr::new(Op::ConstI64 { dst: 1, val: 2 }, brook::Span::synthetic()),
             Instr::new(Op::ConstI64 { dst: 2, val: 3 }, brook::Span::synthetic()),
             Instr::new(
-                Op::MakeTuple { dst: 3, elems: brook::ir::Regs::new(&[0, 1, 2]) },
+                Op::MakeTuple {
+                    dst: 3,
+                    elems: brook::ir::Regs::new(&[0, 1, 2]),
+                },
                 brook::Span::synthetic(),
             ),
             Instr::new(Op::Ret { src: 3 }, brook::Span::synthetic()),
@@ -376,7 +396,7 @@ fn hostile_sbc_reports_tuple_arity_mismatch() {
 }
 
 /// 3.8：内存里的 Script 绑定编译时宿主指纹——拿到别的 Engine 上调用
-/// 明确报错，而不是按槽位 id 静默调错宿主函数。
+///    明确报错，而不是按槽位 id 静默调错宿主函数。
 #[test]
 fn script_rejects_foreign_engine_registry() {
     let mut e1 = Engine::new();
@@ -395,7 +415,7 @@ fn script_rejects_foreign_engine_registry() {
 }
 
 /// 3.4：gas 与 O(n) 内建挂钩——`len(64KB 串)` 百万轮在默认 10M 步预算内
-/// 必须被拦（修复前每轮 1 步，实际扫描 6.4e10 字符，宿主挂死数小时）。
+///    必须被拦（修复前每轮 1 步，实际扫描 6.4e10 字符，宿主挂死数小时）。
 #[test]
 fn gas_charges_string_work() {
     let mut src = String::from("func main() {\n    let s = \"");
@@ -428,7 +448,7 @@ fn constant_pool_counts_against_heap_quota() {
 }
 
 /// 5.9：循环变量不可赋值（旧实现放行 → 每轮重置 → 死循环靠 gas 兜底）；
-/// 内层 `let` 遮蔽后的同名变量是合法赋值目标。
+///    内层 `let` 遮蔽后的同名变量是合法赋值目标。
 #[test]
 fn loop_variable_assignment_is_rejected() {
     let engine = Engine::new();
@@ -457,8 +477,8 @@ fn loop_variable_assignment_is_rejected() {
 }
 
 /// 3.7：deps_fresh 的包含性收敛——缓存里的依赖路径指向 import_dir 之外
-/// 时，缓存必须判失效（重建走 resolve 护栏），宿主目录树外的诱饵文件
-/// 不再能借缓存校验路径被读取。
+///    时，缓存必须判失效（重建走 resolve 护栏），宿主目录树外的诱饵文件
+///    不再能借缓存校验路径被读取。
 #[test]
 fn cache_deps_outside_import_dir_invalidate() {
     use std::path::PathBuf;
@@ -481,9 +501,8 @@ fn cache_deps_outside_import_dir_invalidate() {
     // 与 hash 都是诱饵文件的——修复前 deps_fresh 按路径读诱饵、hash 命中
     // → 缓存命中 → 调用 n*3；修复后包含性检查失败 → 判失效 → 重建走
     // resolve（找到 libs/ 里的真 lib）→ n*2。
-    let decoy_hash = brook::cache::hash_source(
-        &std::fs::read_to_string(outside_dir.join("common.bk")).unwrap(),
-    );
+    let decoy_hash =
+        brook::cache::hash_source(&std::fs::read_to_string(outside_dir.join("common.bk")).unwrap());
     let prog = Program {
         funcs: vec![Function {
             name: "main".into(),
@@ -512,7 +531,11 @@ fn cache_deps_outside_import_dir_invalidate() {
         )],
         host_fp: engine.fingerprint(),
     };
-    std::fs::write(&cache_path, brook::cache::encode(&hostile, &engine.fingerprint())).unwrap();
+    std::fs::write(
+        &cache_path,
+        brook::cache::encode(&hostile, &engine.fingerprint()),
+    )
+    .unwrap();
 
     let s2 = engine.compile_cached(src, "task", &cache_path).unwrap();
     assert_eq!(
@@ -525,7 +548,7 @@ fn cache_deps_outside_import_dir_invalidate() {
 }
 
 /// 5.2：带 import 的脚本缓存命中后，`Script::source` 必须是拼接视图
-/// （v6 源码段）——report 的源码行 / caret 才对得上行号。
+///    （v6 源码段）——report 的源码行 / caret 才对得上行号。
 #[test]
 fn cached_import_script_keeps_combined_source() {
     let dir = std::env::temp_dir().join(format!("brook_cached_src_{}", std::process::id()));
@@ -552,7 +575,7 @@ fn cached_import_script_keeps_combined_source() {
 // ===========================================================================
 
 /// 4.7：同一脚本 + 同一指纹，两次 encode 产出的字节必须完全一致——
-/// HashMap 无序迭代曾让构建产物比对与缓存 diff 失效。
+///    HashMap 无序迭代曾让构建产物比对与缓存 diff 失效。
 #[test]
 fn encode_is_deterministic() {
     let mut engine = Engine::new();
@@ -567,16 +590,19 @@ fn encode_is_deterministic() {
 }
 
 /// 5.13：`ms_last_error` 按字节截断必须落在 UTF-8 字符边界上——C 侧拿到
-/// 的一定是合法 UTF-8（旧实现会在 CJK 字符中间切断）。
+///    的一定是合法 UTF-8（旧实现会在 CJK 字符中间切断）。
 #[test]
 fn ffi_error_truncation_is_utf8_safe() {
     use brook::ffi::ms_last_error;
     use std::ffi::CString;
 
     // 触发一个含 CJK 的错误消息（import 文件找不到，消息带路径与中文）
-    let src = CString::new("import \"不存在\"
+    let src = CString::new(
+        "import \"不存在\"
 
-func main() { 1 }").unwrap();
+func main() { 1 }",
+    )
+    .unwrap();
     let func = CString::new("main").unwrap();
     let mut out: i64 = 0;
     unsafe {
@@ -589,24 +615,25 @@ func main() { 1 }").unwrap();
             assert!(n < cap, "n={} cap={}", n, cap);
             buf[n] = 0;
             let s = std::str::from_utf8(&buf[..n]);
-            assert!(s.is_ok(), "cap={}: truncated message is not UTF-8: {:x?}", cap, &buf[..n]);
+            assert!(
+                s.is_ok(),
+                "cap={}: truncated message is not UTF-8: {:x?}",
+                cap,
+                &buf[..n]
+            );
         }
     }
 }
 
 /// 5.13：函数参数上限与 MAX_OPERANDS 同口径——入口参数 >8 在定义处
-/// 一并报错（旧实现定义能过、脚本内部调用必挂的不对称）。
+///    一并报错（旧实现定义能过、脚本内部调用必挂的不对称）。
 #[test]
 fn function_params_capped_at_max_operands() {
     let engine = Engine::new();
     let err = engine
         .load_str("func f(a, b, c, d, e, g, h, i, j) { a }")
         .unwrap_err();
-    assert!(
-        err.message.contains("has 9 parameters"),
-        "{}",
-        err.message
-    );
+    assert!(err.message.contains("has 9 parameters"), "{}", err.message);
     // 8 个参数合法
     let ok = engine
         .load_str("func f(a, b, c, d, e, g, h, i) { a + i }")

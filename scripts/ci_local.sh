@@ -20,6 +20,8 @@ run() {
   fi
 }
 
+run "cargo fmt --check"   cargo fmt --all -- --check
+run "cargo clippy"        cargo clippy --all-targets -- -D warnings
 run "cargo test（全量）"  cargo test --all-targets
 run "release 构建"        cargo build --release --lib
 

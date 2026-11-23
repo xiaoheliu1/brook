@@ -12,7 +12,7 @@
 
 use crate::engine::Script;
 use crate::error::{Error, Result};
-use crate::ir::{builtin, Instr, Op, Program, Reg, Regs, Function, FuncId, MAX_OPERANDS};
+use crate::ir::{builtin, FuncId, Function, Instr, Op, Program, Reg, Regs, MAX_OPERANDS};
 use crate::ty::Ty;
 use crate::typecheck::{FuncSig, SigTable};
 use crate::validate;
@@ -62,12 +62,24 @@ pub fn hash_source(src: &str) -> u64 {
 struct Writer(Vec<u8>);
 
 impl Writer {
-    fn new() -> Self { Self(Vec::new()) }
-    fn u8(&mut self, x: u8) { self.0.push(x); }
-    fn u16(&mut self, x: u16) { self.0.extend_from_slice(&x.to_le_bytes()); }
-    fn u32(&mut self, x: u32) { self.0.extend_from_slice(&x.to_le_bytes()); }
-    fn u64(&mut self, x: u64) { self.0.extend_from_slice(&x.to_le_bytes()); }
-    fn slice(&mut self, x: &[u8]) { self.0.extend_from_slice(x); }
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+    fn u8(&mut self, x: u8) {
+        self.0.push(x);
+    }
+    fn u16(&mut self, x: u16) {
+        self.0.extend_from_slice(&x.to_le_bytes());
+    }
+    fn u32(&mut self, x: u32) {
+        self.0.extend_from_slice(&x.to_le_bytes());
+    }
+    fn u64(&mut self, x: u64) {
+        self.0.extend_from_slice(&x.to_le_bytes());
+    }
+    fn slice(&mut self, x: &[u8]) {
+        self.0.extend_from_slice(x);
+    }
     fn str(&mut self, s: &str) {
         self.u32(s.len() as u32);
         self.slice(s.as_bytes());
@@ -80,10 +92,15 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    fn new(buf: &'a [u8]) -> Self { Self { buf, pos: 0 } }
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let end = self.pos.checked_add(n).ok_or_else(|| Error::io("cache: length overflow"))?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| Error::io("cache: length overflow"))?;
         if end > self.buf.len() {
             return Err(Error::io("cache: truncated file"));
         }
@@ -92,7 +109,9 @@ impl<'a> Reader<'a> {
         Ok(out)
     }
 
-    fn u8(&mut self) -> Result<u8> { Ok(self.take(1)?[0]) }
+    fn u8(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
     fn u16(&mut self) -> Result<u16> {
         let b = self.take(2)?;
         Ok(u16::from_le_bytes([b[0], b[1]]))
@@ -103,7 +122,9 @@ impl<'a> Reader<'a> {
     }
     fn u64(&mut self) -> Result<u64> {
         let b = self.take(8)?;
-        Ok(u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+        Ok(u64::from_le_bytes([
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        ]))
     }
     fn str(&mut self) -> Result<String> {
         let n = self.u32()? as usize;
@@ -118,17 +139,25 @@ fn write_ty(w: &mut Writer, ty: &Ty) {
         Ty::F64 => w.u8(2),
         Ty::Bool => w.u8(3),
         Ty::Str => w.u8(4),
-        Ty::Handle(n) => { w.u8(5); w.str(n); }
+        Ty::Handle(n) => {
+            w.u8(5);
+            w.str(n);
+        }
         Ty::Tuple(ts) => {
             w.u8(6);
             w.u32(ts.len() as u32);
-            for t in ts { write_ty(w, t); }
+            for t in ts {
+                write_ty(w, t);
+            }
         }
         Ty::Arr(t) => {
             w.u8(9);
             write_ty(w, t);
         }
-        Ty::Var(id) => { w.u8(7); w.u64(*id as u64); }
+        Ty::Var(id) => {
+            w.u8(7);
+            w.u64(*id as u64);
+        }
         Ty::Unit => w.u8(8),
     }
 }
@@ -152,9 +181,13 @@ fn read_ty_at(r: &mut Reader<'_>, depth: usize) -> Result<Ty> {
         5 => Ty::Handle(r.str()?),
         6 => {
             let n = r.u32()? as usize;
-            if n > r.buf.len() { return Err(Error::io("cache: implausible tuple length")); }
+            if n > r.buf.len() {
+                return Err(Error::io("cache: implausible tuple length"));
+            }
             let mut ts = Vec::with_capacity(n);
-            for _ in 0..n { ts.push(read_ty_at(r, depth + 1)?); }
+            for _ in 0..n {
+                ts.push(read_ty_at(r, depth + 1)?);
+            }
             Ty::Tuple(ts)
         }
         7 => Ty::Var(usize::try_from(r.u64()?).map_err(|_| Error::io("cache: var id overflow"))?),
@@ -166,16 +199,25 @@ fn read_ty_at(r: &mut Reader<'_>, depth: usize) -> Result<Ty> {
 
 fn write_sig(w: &mut Writer, sig: &FuncSig) {
     w.u32(sig.params.len() as u32);
-    for p in &sig.params { write_ty(w, p); }
+    for p in &sig.params {
+        write_ty(w, p);
+    }
     write_ty(w, &sig.ret);
 }
 
 fn read_sig(r: &mut Reader<'_>) -> Result<FuncSig> {
     let n = r.u32()? as usize;
-    if n > r.buf.len() { return Err(Error::io("cache: implausible signature length")); }
+    if n > r.buf.len() {
+        return Err(Error::io("cache: implausible signature length"));
+    }
     let mut params = Vec::with_capacity(n);
-    for _ in 0..n { params.push(read_ty(r)?); }
-    Ok(FuncSig { params, ret: read_ty(r)? })
+    for _ in 0..n {
+        params.push(read_ty(r)?);
+    }
+    Ok(FuncSig {
+        params,
+        ret: read_ty(r)?,
+    })
 }
 
 // ------------------------------ instruction encoding ------------------------------
@@ -200,7 +242,15 @@ struct Wire {
 
 impl Wire {
     fn new(tag: u16, r: [Reg; 3], imm: u64, imm2: u64, extra: Vec<Reg>) -> Self {
-        Self { tag, line: 0, col: 0, r, imm, imm2, extra }
+        Self {
+            tag,
+            line: 0,
+            col: 0,
+            r,
+            imm,
+            imm2,
+            extra,
+        }
     }
 }
 
@@ -411,16 +461,28 @@ fn write_instr(w: &mut Writer, ins: &Instr) {
     w.u16(x.tag);
     w.u32(x.line);
     w.u32(x.col);
-    for r in x.r { w.u16(r); }
+    for r in x.r {
+        w.u16(r);
+    }
     w.u64(x.imm);
     w.u64(x.imm2);
     w.u8(x.extra.len() as u8);
-    for r in x.extra { w.u16(r); }
+    for r in x.extra {
+        w.u16(r);
+    }
 }
 
 /// Cheap structural sanity check on decoded code. Keeps a damaged cache from
 /// producing out-of-bounds indexing inside the VM.
-fn validate_wire(w: &Wire, nregs: u16, code_len: usize, nfuncs: usize, nstrings: usize, nhost: usize, ntypes: usize) -> Result<()> {
+fn validate_wire(
+    w: &Wire,
+    nregs: u16,
+    code_len: usize,
+    nfuncs: usize,
+    nstrings: usize,
+    nhost: usize,
+    ntypes: usize,
+) -> Result<()> {
     let bad = |what: &str| Error::io(format!("cache: {what} out of range"));
     // For call opcodes `r[1]` holds a function id, not a register.
     let skip = matches!(w.tag, 60..=62);
@@ -429,42 +491,72 @@ fn validate_wire(w: &Wire, nregs: u16, code_len: usize, nfuncs: usize, nstrings:
     // equally strict avoids a "which one caught it" question when reading a
     // rejection.
     for (i, &r) in w.r.iter().enumerate() {
-        if skip && i == 1 { continue; }
-        if r as usize >= nregs as usize { return Err(bad("register")); }
+        if skip && i == 1 {
+            continue;
+        }
+        if r as usize >= nregs as usize {
+            return Err(bad("register"));
+        }
     }
     for &r in &w.extra {
-        if r as usize >= nregs as usize { return Err(bad("register")); }
+        if r as usize >= nregs as usize {
+            return Err(bad("register"));
+        }
     }
     match w.tag {
         4 => {
             let id = usize::try_from(w.imm).map_err(|_| bad("string id"))?;
-            if id >= nstrings { return Err(bad("string id")); }
+            if id >= nstrings {
+                return Err(bad("string id"));
+            }
         }
         46 | 47 | 48..=59 | 66..=71 => {
             let t = wire_target(w)?;
             // Strictly less than, matching `validate::validate`: a target
             // equal to code.len() would step past the final instruction.
-            if t >= code_len { return Err(bad("jump target")); }
+            if t >= code_len {
+                return Err(bad("jump target"));
+            }
         }
-        60 => { if w.r[1] as usize >= nfuncs { return Err(bad("script function id")); } }
-        61 => { if w.r[1] as usize >= nhost { return Err(bad("host function id")); } }
+        60 => {
+            if w.r[1] as usize >= nfuncs {
+                return Err(bad("script function id"));
+            }
+        }
+        61 => {
+            if w.r[1] as usize >= nhost {
+                return Err(bad("host function id"));
+            }
+        }
         62 => {
             // `builtin::name` is the single source of truth for the id space:
             // it returns "?builtin" for anything undefined, so adding a new
             // builtin cannot silently invalidate older decoders' bounds here.
             let id = u8::try_from(w.r[1]).map_err(|_| bad("builtin id"))?;
-            if builtin::name(id) == "?builtin" { return Err(bad("builtin id")); }
+            if builtin::name(id) == "?builtin" {
+                return Err(bad("builtin id"));
+            }
         }
         76 => {
             let id = u32::try_from(w.imm).map_err(|_| bad("type id"))?;
-            if id as usize >= ntypes { return Err(bad("type id")); }
+            if id as usize >= ntypes {
+                return Err(bad("type id"));
+            }
         }
         _ => {}
     }
     Ok(())
 }
 
-fn read_instr(r: &mut Reader<'_>, nregs: u16, code_len: usize, nfuncs: usize, nstrings: usize, nhost: usize, ntypes: usize) -> Result<Instr> {
+fn read_instr(
+    r: &mut Reader<'_>,
+    nregs: u16,
+    code_len: usize,
+    nfuncs: usize,
+    nstrings: usize,
+    nhost: usize,
+    ntypes: usize,
+) -> Result<Instr> {
     let tag = r.u16()?;
     let line = r.u32()?;
     let col = r.u32()?;
@@ -472,12 +564,28 @@ fn read_instr(r: &mut Reader<'_>, nregs: u16, code_len: usize, nfuncs: usize, ns
     let imm = r.u64()?;
     let imm2 = r.u64()?;
     let n = r.u8()? as usize;
-    if n > MAX_OPERANDS { return Err(Error::io("cache: too many inline operands")); }
+    if n > MAX_OPERANDS {
+        return Err(Error::io("cache: too many inline operands"));
+    }
     let mut extra = Vec::with_capacity(n);
-    for _ in 0..n { extra.push(r.u16()?); }
-    let w = Wire { tag, line, col, r: regs, imm, imm2, extra };
+    for _ in 0..n {
+        extra.push(r.u16()?);
+    }
+    let w = Wire {
+        tag,
+        line,
+        col,
+        r: regs,
+        imm,
+        imm2,
+        extra,
+    };
     validate_wire(&w, nregs, code_len, nfuncs, nstrings, nhost, ntypes)?;
-    Ok(Instr { op: decode_op(w)?, line, col })
+    Ok(Instr {
+        op: decode_op(w)?,
+        line,
+        col,
+    })
 }
 
 // ------------------------------ whole program ------------------------------
@@ -493,40 +601,58 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
     for (name, id, params, ret) in fp {
         w.str(name);
         w.u16(*id);
-        write_sig(&mut w, &FuncSig { params: params.clone(), ret: ret.clone() });
+        write_sig(
+            &mut w,
+            &FuncSig {
+                params: params.clone(),
+                ret: ret.clone(),
+            },
+        );
     }
 
     // 确定性编码（D-046 4.7）：HashMap 遍历顺序不定，两次 encode 出的字节
     // 会不同——破坏构建产物比对与缓存 diff。按名字排序后写。
     w.u32(script.sigs.len() as u32);
     let mut sig_pairs: Vec<_> = script.sigs.iter().collect();
-    sig_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    sig_pairs.sort_by(|a, b| a.0.cmp(b.0));
     for (name, sig) in sig_pairs {
         w.str(name);
         write_sig(&mut w, sig);
     }
 
     w.u32(script.code.strings.len() as u32);
-    for s in &script.code.strings { w.str(s); }
+    for s in &script.code.strings {
+        w.str(s);
+    }
 
     // v7（D-047）：`ContainsTyped` 引用的静态类型池。类型拥有 String/Vec，
     // 不能直接塞进 Copy 的 Instr，所以走旁路表 + u32 索引。
     w.u32(script.code.types.len() as u32);
-    for t in &script.code.types { write_ty(&mut w, t); }
+    for t in &script.code.types {
+        write_ty(&mut w, t);
+    }
 
     w.u32(script.code.funcs.len() as u32);
     for f in &script.code.funcs {
         w.str(&f.name);
         w.u16(f.nregs);
-        write_sig(&mut w, &FuncSig { params: f.params.clone(), ret: f.ret.clone() });
+        write_sig(
+            &mut w,
+            &FuncSig {
+                params: f.params.clone(),
+                ret: f.ret.clone(),
+            },
+        );
         w.u32(f.code.len() as u32);
-        for ins in &f.code { write_instr(&mut w, ins); }
+        for ins in &f.code {
+            write_instr(&mut w, ins);
+        }
     }
 
     // 同上：ids 按名字排序，保证逐字节可复现
     w.u32(script.code.ids.len() as u32);
     let mut id_pairs: Vec<_> = script.code.ids.iter().collect();
-    id_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    id_pairs.sort_by(|a, b| a.0.cmp(b.0));
     for (name, id) in id_pairs {
         w.str(name);
         w.u16(*id);
@@ -552,10 +678,14 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
 
 pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
     let mut r = Reader::new(bytes);
-    if r.take(4)? != MAGIC { return Err(Error::io("cache: bad magic (not an .sbc file)")); }
+    if r.take(4)? != MAGIC {
+        return Err(Error::io("cache: bad magic (not an .sbc file)"));
+    }
     let version = r.u16()?;
     if version != VERSION {
-        return Err(Error::io(format!("cache: version {version} != {VERSION}; recompile")));
+        return Err(Error::io(format!(
+            "cache: version {version} != {VERSION}; recompile"
+        )));
     }
     let source_hash = r.u64()?;
     let name = r.str()?;
@@ -571,7 +701,9 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
     }
 
     let n_fp = r.u32()? as usize;
-    if n_fp > bytes.len() { return Err(Error::io("cache: implausible registry size")); }
+    if n_fp > bytes.len() {
+        return Err(Error::io("cache: implausible registry size"));
+    }
     let mut cached_fp = Vec::with_capacity(plausible_cap(n_fp, bytes, r.pos));
     for _ in 0..n_fp {
         let n = r.str()?;
@@ -580,12 +712,16 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
         cached_fp.push((n, id, sig.params, sig.ret));
     }
     if &cached_fp != fp {
-        return Err(Error::io("cache: host registry changed since the cache was built; recompile"));
+        return Err(Error::io(
+            "cache: host registry changed since the cache was built; recompile",
+        ));
     }
     let nhost = fp.len();
 
     let n_sigs = r.u32()? as usize;
-    if n_sigs > bytes.len() { return Err(Error::io("cache: implausible signature table size")); }
+    if n_sigs > bytes.len() {
+        return Err(Error::io("cache: implausible signature table size"));
+    }
     let mut sigs = SigTable::with_capacity(plausible_cap(n_sigs, bytes, r.pos));
     for _ in 0..n_sigs {
         let n = r.str()?;
@@ -593,35 +729,64 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
     }
 
     let n_strings = r.u32()? as usize;
-    if n_strings > bytes.len() { return Err(Error::io("cache: implausible string pool size")); }
+    if n_strings > bytes.len() {
+        return Err(Error::io("cache: implausible string pool size"));
+    }
     let mut strings: Vec<Rc<str>> = Vec::with_capacity(plausible_cap(n_strings, bytes, r.pos));
-    for _ in 0..n_strings { strings.push(Rc::from(r.str()?.as_str())); }
+    for _ in 0..n_strings {
+        strings.push(Rc::from(r.str()?.as_str()));
+    }
 
     // v7（D-047）：静态类型池；指令里的 imm 是这里的下标。
     let n_types = r.u32()? as usize;
-    if n_types > bytes.len() { return Err(Error::io("cache: implausible type pool size")); }
+    if n_types > bytes.len() {
+        return Err(Error::io("cache: implausible type pool size"));
+    }
     let mut types = Vec::with_capacity(plausible_cap(n_types, bytes, r.pos));
-    for _ in 0..n_types { types.push(read_ty(&mut r)?); }
+    for _ in 0..n_types {
+        types.push(read_ty(&mut r)?);
+    }
 
     let n_funcs = r.u32()? as usize;
-    if n_funcs > bytes.len() { return Err(Error::io("cache: implausible function count")); }
+    if n_funcs > bytes.len() {
+        return Err(Error::io("cache: implausible function count"));
+    }
     let mut funcs: Vec<Function> = Vec::with_capacity(plausible_cap(n_funcs, bytes, r.pos));
     for _ in 0..n_funcs {
         let fname = r.str()?;
         let nregs = r.u16()?;
         let sig = read_sig(&mut r)?;
         let n_code = r.u32()? as usize;
-        if n_code > bytes.len() { return Err(Error::io("cache: implausible code length")); }
+        if n_code > bytes.len() {
+            return Err(Error::io("cache: implausible code length"));
+        }
         let mut code = Vec::with_capacity(plausible_cap(n_code, bytes, r.pos));
         for _ in 0..n_code {
-            code.push(read_instr(&mut r, nregs, n_code, n_funcs, n_strings, nhost, types.len())?);
+            code.push(read_instr(
+                &mut r,
+                nregs,
+                n_code,
+                n_funcs,
+                n_strings,
+                nhost,
+                types.len(),
+            )?);
         }
-        funcs.push(Function { name: fname, code, nregs, params: sig.params, ret: sig.ret });
+        funcs.push(Function {
+            name: fname,
+            code,
+            nregs,
+            params: sig.params,
+            ret: sig.ret,
+        });
     }
 
     let n_ids = r.u32()? as usize;
-    if n_ids > bytes.len() { return Err(Error::io("cache: implausible id table size")); }
-    let mut ids: HashMap<String, FuncId> = HashMap::with_capacity(plausible_cap(n_ids, bytes, r.pos));
+    if n_ids > bytes.len() {
+        return Err(Error::io("cache: implausible id table size"));
+    }
+    let mut ids: HashMap<String, FuncId> =
+        HashMap::with_capacity(plausible_cap(n_ids, bytes, r.pos));
     for _ in 0..n_ids {
         let n = r.str()?;
         ids.insert(n, r.u16()?);
@@ -633,15 +798,21 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
     // 注意依赖路径存的是 resolve 后的真实路径（可以是绝对路径），所以这里
     // 不能禁绝对路径——包含性收敛在 deps_fresh 里按 import_dir 做。
     let n_deps = r.u32()? as usize;
-    if n_deps > bytes.len() { return Err(Error::io("cache: implausible dependency count")); }
+    if n_deps > bytes.len() {
+        return Err(Error::io("cache: implausible dependency count"));
+    }
     let mut deps = Vec::with_capacity(plausible_cap(n_deps, bytes, r.pos));
     for _ in 0..n_deps {
         let path = r.str()?;
         let hash = r.u64()?;
         let is_file = r.u8()?;
-        if is_file > 1 { return Err(Error::io("cache: invalid dependency flag")); }
+        if is_file > 1 {
+            return Err(Error::io("cache: invalid dependency flag"));
+        }
         if path.is_empty() || path.chars().any(|c| c.is_control()) {
-            return Err(Error::io("cache: dependency path contains control characters"));
+            return Err(Error::io(
+                "cache: dependency path contains control characters",
+            ));
         }
         if path.split(['/', '\\']).any(|c| c == "..") {
             return Err(Error::io("cache: dependency path contains '..'"));
@@ -693,11 +864,20 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
     for (n, &id) in &ids {
         match funcs.get(id as usize) {
             Some(f) if f.name == *n => {}
-            _ => return Err(Error::io("cache: id table maps a name to a foreign function")),
+            _ => {
+                return Err(Error::io(
+                    "cache: id table maps a name to a foreign function",
+                ))
+            }
         }
     }
 
-    let program = Program { funcs, ids, strings, types };
+    let program = Program {
+        funcs,
+        ids,
+        strings,
+        types,
+    };
     validate::validate(&program, nhost)?;
 
     Ok(Script {

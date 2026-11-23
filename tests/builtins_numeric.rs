@@ -16,7 +16,10 @@ fn call(src: &str, name: &str, args: Vec<Value>) -> Value {
 }
 
 fn load_err(src: &str) -> String {
-    Engine::new().load_str(src).expect_err("expected a compile error").to_string()
+    Engine::new()
+        .load_str(src)
+        .expect_err("expected a compile error")
+        .to_string()
 }
 
 #[test]
@@ -24,7 +27,10 @@ fn abs_keeps_i64() {
     assert_eq!(call("func f() { abs(-5) }", "f", vec![]), Value::I64(5));
     assert_eq!(call("func f() { abs(5) }", "f", vec![]), Value::I64(5));
     // The result stays usable in integer arithmetic without a cast.
-    assert_eq!(call("func f() { abs(-5) * 2 }", "f", vec![]), Value::I64(10));
+    assert_eq!(
+        call("func f() { abs(-5) * 2 }", "f", vec![]),
+        Value::I64(10)
+    );
 }
 
 #[test]
@@ -36,19 +42,30 @@ fn abs_keeps_f64() {
 fn min_max_keep_i64() {
     assert_eq!(call("func f() { min(3, 7) }", "f", vec![]), Value::I64(3));
     assert_eq!(call("func f() { max(3, 7) }", "f", vec![]), Value::I64(7));
-    assert_eq!(call("func f() { min(-3, -7) }", "f", vec![]), Value::I64(-7));
+    assert_eq!(
+        call("func f() { min(-3, -7) }", "f", vec![]),
+        Value::I64(-7)
+    );
 }
 
 #[test]
 fn min_max_keep_f64() {
-    assert_eq!(call("func f() { min(3.5, 7.25) }", "f", vec![]), Value::F64(3.5));
-    assert_eq!(call("func f() { max(3.5, 7.25) }", "f", vec![]), Value::F64(7.25));
+    assert_eq!(
+        call("func f() { min(3.5, 7.25) }", "f", vec![]),
+        Value::F64(3.5)
+    );
+    assert_eq!(
+        call("func f() { max(3.5, 7.25) }", "f", vec![]),
+        Value::F64(7.25)
+    );
 }
 
 #[test]
 fn declared_signature_reports_the_specialized_type() {
     let engine = Engine::new();
-    let script = engine.load_str("func i() { abs(-1) } func r() { abs(-1.0) }").unwrap();
+    let script = engine
+        .load_str("func i() { abs(-1) } func r() { abs(-1.0) }")
+        .unwrap();
     assert_eq!(script.sigs.get("i").unwrap().ret, Ty::I64);
     assert_eq!(script.sigs.get("r").unwrap().ret, Ty::F64);
 }
@@ -69,13 +86,21 @@ fn mixed_argument_types_are_rejected() {
     // No implicit widening: the language does not mix i64 and f64 in `+`
     // either, so min/max refuse it as well rather than silently picking one.
     let msg = load_err("func f() { min(1, 2.0) }");
-    assert!(msg.contains("min: type mismatch: expected f64, found i64"), "{}", msg);
+    assert!(
+        msg.contains("min: type mismatch: expected f64, found i64"),
+        "{}",
+        msg
+    );
 }
 
 #[test]
 fn non_numeric_arguments_are_rejected() {
     let msg = load_err("func f(a: str) { abs(a) }");
-    assert!(msg.contains("abs: type mismatch: expected f64, found str"), "{}", msg);
+    assert!(
+        msg.contains("abs: type mismatch: expected f64, found str"),
+        "{}",
+        msg
+    );
 }
 
 #[test]
@@ -83,7 +108,11 @@ fn sqrt_stays_f64_only() {
     // Deliberate: sqrt of an integer has no exact i64 result, so it keeps
     // requiring f64 instead of silently truncating.
     let msg = load_err("func f() { sqrt(4) }");
-    assert!(msg.contains("sqrt: type mismatch: expected f64, found i64"), "{}", msg);
+    assert!(
+        msg.contains("sqrt: type mismatch: expected f64, found i64"),
+        "{}",
+        msg
+    );
 }
 
 #[test]
@@ -101,7 +130,9 @@ fn abs_of_i64_min_is_an_error_not_a_panic() {
 #[test]
 fn specialization_survives_the_sbc_cache() {
     let engine = Engine::new();
-    let script = engine.load_str("func f(x: i64) { max(abs(x), 3) }").unwrap();
+    let script = engine
+        .load_str("func f(x: i64) { max(abs(x), 3) }")
+        .unwrap();
     let bytes = engine.script_to_bytes(&script);
     // Decoding re-runs `validate`, which rejects unknown builtin ids — this
     // fails if the new ids were not registered with `builtin::name`.
@@ -115,7 +146,11 @@ fn specialization_survives_the_sbc_cache() {
 #[test]
 fn wrong_arity_mentions_how_many_are_expected() {
     let msg = load_err("func f() { max(1) }");
-    assert!(msg.contains("`max` expects 2 argument(s), got 1"), "{}", msg);
+    assert!(
+        msg.contains("`max` expects 2 argument(s), got 1"),
+        "{}",
+        msg
+    );
 }
 
 #[test]
@@ -141,7 +176,9 @@ fn no_numeric_evidence_defaults_to_f64() {
     let script = engine.load_str("func f(a, b) { max(a, b) }").unwrap();
     assert_eq!(script.sigs.get("f").unwrap().params[0], Ty::F64);
     assert_eq!(
-        engine.call(&script, "f", vec![Value::F64(1.5), Value::F64(2.5)]).unwrap(),
+        engine
+            .call(&script, "f", vec![Value::F64(1.5), Value::F64(2.5)])
+            .unwrap(),
         Value::F64(2.5)
     );
 }

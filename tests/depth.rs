@@ -20,7 +20,11 @@ fn err_of(src: &str) -> String {
 
 #[test]
 fn deeply_nested_parentheses_are_rejected() {
-    let src = format!("func f(x) {{ {}x{} }}", "(".repeat(2_000), ")".repeat(2_000));
+    let src = format!(
+        "func f(x) {{ {}x{} }}",
+        "(".repeat(2_000),
+        ")".repeat(2_000)
+    );
     let msg = err_of(&src);
     assert!(msg.contains("nesting too deep"), "{}", msg);
     // The guard reports the stage it belongs to, so callers can distinguish a
@@ -95,20 +99,20 @@ fn everyday_nesting_still_compiles() {
     let engine = Engine::new();
 
     // 60 levels of parentheses around a value.
-    let src = format!(
-        "func f(x) {{ {}x{} }}",
-        "(".repeat(60),
-        ")".repeat(60)
-    );
+    let src = format!("func f(x) {{ {}x{} }}", "(".repeat(60), ")".repeat(60));
     let script = engine.load_str(&src).expect("60 levels must be accepted");
     assert_eq!(
-        engine.call(&script, "f", vec![brook::Value::I64(7)]).unwrap(),
+        engine
+            .call(&script, "f", vec![brook::Value::I64(7)])
+            .unwrap(),
         brook::Value::I64(7)
     );
 
     // 60-term sum, evaluated to make sure the folding is still correct.
     let src = format!("func f() {{ {}1 }}", "1+".repeat(60));
-    let script = engine.load_str(&src).expect("60-term chain must be accepted");
+    let script = engine
+        .load_str(&src)
+        .expect("60-term chain must be accepted");
     assert_eq!(
         engine.call(&script, "f", vec![]).unwrap(),
         brook::Value::I64(61)
@@ -120,7 +124,9 @@ fn everyday_nesting_still_compiles() {
         "if x { ".repeat(20),
         " }".repeat(20)
     );
-    engine.load_str(&src).expect("20 nested ifs must be accepted");
+    engine
+        .load_str(&src)
+        .expect("20 nested ifs must be accepted");
 
     // 20-level else-if chain as an *expression*: the guard counts every
     // if-expression (this path used to be unguarded; see the regression
@@ -134,18 +140,28 @@ fn everyday_nesting_still_compiles() {
         .load_str(&src)
         .expect("20-level if-expression ladder must be accepted");
     assert_eq!(
-        engine.call(&script, "f", vec![brook::Value::Bool(false)]).unwrap(),
+        engine
+            .call(&script, "f", vec![brook::Value::Bool(false)])
+            .unwrap(),
         brook::Value::I64(2)
     );
 }
 
 #[test]
 fn limit_is_reported_with_a_source_location() {
-    let src = format!("func f(x) {{ {}x{} }}", "(".repeat(MAX_NESTING + 5), ")".repeat(MAX_NESTING + 5));
+    let src = format!(
+        "func f(x) {{ {}x{} }}",
+        "(".repeat(MAX_NESTING + 5),
+        ")".repeat(MAX_NESTING + 5)
+    );
     let err = Engine::new().load_str(&src).unwrap_err();
     let span = err.span.expect("parser errors carry a span");
     assert_eq!(span.line, 1);
-    assert!(span.col > 1, "column should point into the expression, got {}", span.col);
+    assert!(
+        span.col > 1,
+        "column should point into the expression, got {}",
+        span.col
+    );
     // `report` must render it without needing anything else from the caller.
     let rendered = err.report(&src, "deep.bk");
     assert!(rendered.contains("deep.bk:1:"), "{}", rendered);

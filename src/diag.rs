@@ -78,7 +78,9 @@ fn line_text(src: &str, line: usize) -> Option<String> {
     if line == 0 {
         return None;
     }
-    src.split('\n').nth(line - 1).map(|l| l.trim_end_matches('\r').to_string())
+    src.split('\n')
+        .nth(line - 1)
+        .map(|l| l.trim_end_matches('\r').to_string())
 }
 
 /// Replace tabs with spaces so the caret arithmetic matches what is printed.
@@ -96,7 +98,10 @@ fn expand_tabs(line: &str) -> String {
 
 /// Display width of the characters before 1-based column `col`.
 fn caret_offset(line: &str, col: usize) -> usize {
-    line.chars().take(col.saturating_sub(1)).map(display_width).sum()
+    line.chars()
+        .take(col.saturating_sub(1))
+        .map(display_width)
+        .sum()
 }
 
 /// Display width of one source character as it is printed: tabs occupy a full
@@ -127,7 +132,10 @@ fn caret_width(src: &str, span: crate::span::Span, line: &str) -> usize {
         && !src[span.start..span.end].contains('\n');
 
     let width = if exact {
-        src[span.start..span.end].chars().map(char_width).sum::<usize>()
+        src[span.start..span.end]
+            .chars()
+            .map(char_width)
+            .sum::<usize>()
     } else {
         1
     };
@@ -135,22 +143,21 @@ fn caret_width(src: &str, span: crate::span::Span, line: &str) -> usize {
 }
 
 /// Print the head and tail of a deep stack, eliding the middle.
-fn trace_frames(trace: &[crate::error::TraceFrame]) -> impl Iterator<Item = Option<&crate::error::TraceFrame>> {
+fn trace_frames(
+    trace: &[crate::error::TraceFrame],
+) -> impl Iterator<Item = Option<&crate::error::TraceFrame>> {
     let head = MAX_TRACE * 3 / 4;
     let tail = MAX_TRACE - head;
     let truncated = trace.len() > MAX_TRACE;
-    trace
-        .iter()
-        .enumerate()
-        .filter_map(move |(i, f)| {
-            if !truncated || i < head || i >= trace.len() - tail {
-                Some(Some(f))
-            } else if i == head {
-                Some(None)
-            } else {
-                None
-            }
-        })
+    trace.iter().enumerate().filter_map(move |(i, f)| {
+        if !truncated || i < head || i >= trace.len() - tail {
+            Some(Some(f))
+        } else if i == head {
+            Some(None)
+        } else {
+            None
+        }
+    })
 }
 
 /// Display width of one character. Only the ranges that matter for this

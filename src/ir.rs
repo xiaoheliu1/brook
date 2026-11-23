@@ -35,11 +35,18 @@ impl Regs {
         assert!(slice.len() <= MAX_OPERANDS, "too many operands");
         let mut items = [0; MAX_OPERANDS];
         items[..slice.len()].copy_from_slice(slice);
-        Self { items, len: slice.len() as u8 }
+        Self {
+            items,
+            len: slice.len() as u8,
+        }
     }
 
     pub fn len(&self) -> usize {
         self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     pub fn get(&self, i: usize) -> Reg {
@@ -66,7 +73,11 @@ pub struct Instr {
 
 impl Instr {
     pub fn new(op: Op, span: Span) -> Self {
-        Self { op, line: span.line as u32, col: span.col as u32 }
+        Self {
+            op,
+            line: span.line as u32,
+            col: span.col as u32,
+        }
     }
 
     /// Rebuild a `Span` for error reporting at runtime.
@@ -81,76 +92,251 @@ impl Instr {
 #[derive(Debug, Clone, Copy)]
 pub enum Op {
     // ---- constants & moves ----
-    ConstI64 { dst: Reg, val: i64 },
-    ConstF64 { dst: Reg, val: f64 },
-    ConstBool { dst: Reg, val: bool },
+    ConstI64 {
+        dst: Reg,
+        val: i64,
+    },
+    ConstF64 {
+        dst: Reg,
+        val: f64,
+    },
+    ConstBool {
+        dst: Reg,
+        val: bool,
+    },
     /// Load a pre-interned string constant (no allocation).
-    ConstStr { dst: Reg, id: u32 },
-    ConstUnit { dst: Reg },
+    ConstStr {
+        dst: Reg,
+        id: u32,
+    },
+    ConstUnit {
+        dst: Reg,
+    },
     /// Copy a slot (8 bytes, `Copy`). No Rc bump, no clone.
-    Mov { dst: Reg, src: Reg },
+    Mov {
+        dst: Reg,
+        src: Reg,
+    },
 
     // ---- integer arithmetic (checked) ----
-    AddI64 { dst: Reg, a: Reg, b: Reg },
-    SubI64 { dst: Reg, a: Reg, b: Reg },
-    MulI64 { dst: Reg, a: Reg, b: Reg },
-    DivI64 { dst: Reg, a: Reg, b: Reg },
-    ModI64 { dst: Reg, a: Reg, b: Reg },
-    NegI64 { dst: Reg, src: Reg },
+    AddI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    SubI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    MulI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    DivI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    ModI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    NegI64 {
+        dst: Reg,
+        src: Reg,
+    },
     /// `dst = src + imm` (checked). Loop counters use this so an iteration costs
     /// one instruction instead of `const 1; add; mov`.
-    AddI64Imm { dst: Reg, src: Reg, imm: i64 },
+    AddI64Imm {
+        dst: Reg,
+        src: Reg,
+        imm: i64,
+    },
 
     // ---- float arithmetic ----
-    AddF64 { dst: Reg, a: Reg, b: Reg },
-    SubF64 { dst: Reg, a: Reg, b: Reg },
-    MulF64 { dst: Reg, a: Reg, b: Reg },
-    DivF64 { dst: Reg, a: Reg, b: Reg },
-    ModF64 { dst: Reg, a: Reg, b: Reg },
-    NegF64 { dst: Reg, src: Reg },
+    AddF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    SubF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    MulF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    DivF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    ModF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    NegF64 {
+        dst: Reg,
+        src: Reg,
+    },
 
     // ---- comparisons (produce a bool slot) ----
-    EqI64 { dst: Reg, a: Reg, b: Reg },
-    NeI64 { dst: Reg, a: Reg, b: Reg },
-    LtI64 { dst: Reg, a: Reg, b: Reg },
-    LeI64 { dst: Reg, a: Reg, b: Reg },
-    GtI64 { dst: Reg, a: Reg, b: Reg },
-    GeI64 { dst: Reg, a: Reg, b: Reg },
+    EqI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    NeI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    LtI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    LeI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    GtI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    GeI64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
 
-    EqF64 { dst: Reg, a: Reg, b: Reg },
-    NeF64 { dst: Reg, a: Reg, b: Reg },
-    LtF64 { dst: Reg, a: Reg, b: Reg },
-    LeF64 { dst: Reg, a: Reg, b: Reg },
-    GtF64 { dst: Reg, a: Reg, b: Reg },
-    GeF64 { dst: Reg, a: Reg, b: Reg },
+    EqF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    NeF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    LtF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    LeF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    GtF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    GeF64 {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
 
-    EqBool { dst: Reg, a: Reg, b: Reg },
-    NeBool { dst: Reg, a: Reg, b: Reg },
+    EqBool {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    NeBool {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
 
-    EqStr { dst: Reg, a: Reg, b: Reg },
-    NeStr { dst: Reg, a: Reg, b: Reg },
-    LtStr { dst: Reg, a: Reg, b: Reg },
-    LeStr { dst: Reg, a: Reg, b: Reg },
-    GtStr { dst: Reg, a: Reg, b: Reg },
-    GeStr { dst: Reg, a: Reg, b: Reg },
+    EqStr {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    NeStr {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    LtStr {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    LeStr {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    GtStr {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    GeStr {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
 
     /// Reference equality for opaque handles: true when both operands carry
     /// the same host object (`Rc` identity), even though each argument or
     /// host-call result occupies its own heap slot.
-    EqHandle { dst: Reg, a: Reg, b: Reg },
-    NeHandle { dst: Reg, a: Reg, b: Reg },
+    EqHandle {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    NeHandle {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
 
     // ---- logic ----
-    Not { dst: Reg, src: Reg },
-    AndBool { dst: Reg, a: Reg, b: Reg },
-    OrBool { dst: Reg, a: Reg, b: Reg },
+    Not {
+        dst: Reg,
+        src: Reg,
+    },
+    AndBool {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    OrBool {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
     /// String concatenation (allocates a new string on the VM heap).
-    Concat { dst: Reg, a: Reg, b: Reg },
+    Concat {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
 
     // ---- control flow (absolute instruction indices) ----
-    Jump { target: usize },
+    Jump {
+        target: usize,
+    },
     /// Jump when the bool slot is false.
-    JumpIfFalse { cond: Reg, target: usize },
+    JumpIfFalse {
+        cond: Reg,
+        target: usize,
+    },
 
     /// Fused compare-and-branch: jump to `target` when `a OP b` holds.
     ///
@@ -161,65 +347,175 @@ pub enum Op {
     ///
     /// Note each variant means "jump when the predicate is TRUE", so the
     /// negation of a source-level comparison maps to the inverse opcode.
-    JmpIfEqI64 { a: Reg, b: Reg, target: usize },
-    JmpIfNeI64 { a: Reg, b: Reg, target: usize },
-    JmpIfLtI64 { a: Reg, b: Reg, target: usize },
-    JmpIfLeI64 { a: Reg, b: Reg, target: usize },
-    JmpIfGtI64 { a: Reg, b: Reg, target: usize },
-    JmpIfGeI64 { a: Reg, b: Reg, target: usize },
-    JmpIfEqF64 { a: Reg, b: Reg, target: usize },
-    JmpIfNeF64 { a: Reg, b: Reg, target: usize },
-    JmpIfLtF64 { a: Reg, b: Reg, target: usize },
-    JmpIfLeF64 { a: Reg, b: Reg, target: usize },
-    JmpIfGtF64 { a: Reg, b: Reg, target: usize },
-    JmpIfGeF64 { a: Reg, b: Reg, target: usize },
+    JmpIfEqI64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfNeI64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfLtI64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfLeI64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfGtI64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfGeI64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfEqF64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfNeF64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfLtF64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfLeF64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfGtF64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
+    JmpIfGeF64 {
+        a: Reg,
+        b: Reg,
+        target: usize,
+    },
 
     /// Fused compare-immediate branch: jump to `target` when `a OP imm`
     /// holds. Codegen emits these when a condition is a comparison against an
     /// integer literal (e.g. `n < 2`), so the literal never needs a `ConstI64`
     /// instruction or a register of its own. Same negation convention as the
     /// register-register fused branches.
-    JmpIfEqI64Imm { a: Reg, imm: i64, target: usize },
-    JmpIfNeI64Imm { a: Reg, imm: i64, target: usize },
-    JmpIfLtI64Imm { a: Reg, imm: i64, target: usize },
-    JmpIfLeI64Imm { a: Reg, imm: i64, target: usize },
-    JmpIfGtI64Imm { a: Reg, imm: i64, target: usize },
-    JmpIfGeI64Imm { a: Reg, imm: i64, target: usize },
+    JmpIfEqI64Imm {
+        a: Reg,
+        imm: i64,
+        target: usize,
+    },
+    JmpIfNeI64Imm {
+        a: Reg,
+        imm: i64,
+        target: usize,
+    },
+    JmpIfLtI64Imm {
+        a: Reg,
+        imm: i64,
+        target: usize,
+    },
+    JmpIfLeI64Imm {
+        a: Reg,
+        imm: i64,
+        target: usize,
+    },
+    JmpIfGtI64Imm {
+        a: Reg,
+        imm: i64,
+        target: usize,
+    },
+    JmpIfGeI64Imm {
+        a: Reg,
+        imm: i64,
+        target: usize,
+    },
 
     // ---- calls ----
-    CallScript { func: FuncId, args: Regs, dst: Reg },
+    CallScript {
+        func: FuncId,
+        args: Regs,
+        dst: Reg,
+    },
     /// Host signature (params) is looked up by `func` id in the registry at
     /// runtime to reconstruct typed `Value`s — keeps this instruction Copy.
-    CallHost { func: FuncId, args: Regs, dst: Reg },
+    CallHost {
+        func: FuncId,
+        args: Regs,
+        dst: Reg,
+    },
     /// `func` is a builtin id (see `builtin`); string conversion variants are
     /// type-specialized so no runtime type tag is needed.
-    CallBuiltin { func: u8, args: Regs, dst: Reg },
+    CallBuiltin {
+        func: u8,
+        args: Regs,
+        dst: Reg,
+    },
     /// Structural `contains` with the needle's **static** element type.
     ///
     /// `Slot` is an untagged `u64`: comparing two unequal scalars by reading
     /// them as heap indices is a silent wrong answer (and, with self-similar
     /// arrays, unbounded recursion). Codegen knows the element type, so it is
     /// recorded as an index into `Program::types` (D-047).
-    ContainsTyped { hay: Reg, needle: Reg, dst: Reg, ty: u32 },
+    ContainsTyped {
+        hay: Reg,
+        needle: Reg,
+        dst: Reg,
+        ty: u32,
+    },
 
     // ---- tuples ----
-    MakeTuple { dst: Reg, elems: Regs },
-    GetTuple { dst: Reg, base: Reg, index: usize },
+    MakeTuple {
+        dst: Reg,
+        elems: Regs,
+    },
+    GetTuple {
+        dst: Reg,
+        base: Reg,
+        index: usize,
+    },
 
     // ---- arrays (ADR-018; reference semantics via shared heap entries) ----
     /// Allocate an empty array heap entry.
-    NewArr { dst: Reg },
+    NewArr {
+        dst: Reg,
+    },
     /// Append `src` to the array in `arr` (in-place heap mutation; quota is
     /// charged per element). Used for literal construction; scripts call the
     /// `push` builtin, which routes through the same heap helper.
-    ArrPush { arr: Reg, src: Reg },
+    ArrPush {
+        arr: Reg,
+        src: Reg,
+    },
     /// Element count into `dst` (loop bounds use it fused with `JmpIfGeI64`).
-    ArrLen { dst: Reg, src: Reg },
+    ArrLen {
+        dst: Reg,
+        src: Reg,
+    },
     /// `dst = arr[idx]`, bounds-checked.
-    ArrGet { dst: Reg, base: Reg, idx: Reg },
+    ArrGet {
+        dst: Reg,
+        base: Reg,
+        idx: Reg,
+    },
 
     // ---- return ----
-    Ret { src: Reg },
+    Ret {
+        src: Reg,
+    },
 }
 
 /// A compiled function body plus its calling metadata.

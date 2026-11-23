@@ -14,7 +14,10 @@ fn end_to_end_arithmetic_and_if() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "add", vec![Value::I64(2), Value::I64(3)])?, Value::I64(5));
+    assert_eq!(
+        engine.call(&script, "add", vec![Value::I64(2), Value::I64(3)])?,
+        Value::I64(5)
+    );
     assert_eq!(
         engine.call(&script, "classify", vec![Value::I64(42)])?,
         Value::Str("big".into())
@@ -26,7 +29,10 @@ fn end_to_end_arithmetic_and_if() -> Result<()> {
 fn end_to_end_recursion() -> Result<()> {
     let engine = Engine::new();
     let script = engine.load_file("examples/fib.bk")?;
-    assert_eq!(engine.call(&script, "fib", vec![Value::I64(10)])?, Value::I64(55));
+    assert_eq!(
+        engine.call(&script, "fib", vec![Value::I64(10)])?,
+        Value::I64(55)
+    );
     Ok(())
 }
 
@@ -51,8 +57,14 @@ fn end_to_end_loops_and_let() -> Result<()> {
         }
         "#,
     )?;
-    assert_eq!(engine.call(&script, "sum_to", vec![Value::I64(5)])?, Value::I64(10));
-    assert_eq!(engine.call(&script, "countdown", vec![Value::I64(5)])?, Value::I64(0));
+    assert_eq!(
+        engine.call(&script, "sum_to", vec![Value::I64(5)])?,
+        Value::I64(10)
+    );
+    assert_eq!(
+        engine.call(&script, "countdown", vec![Value::I64(5)])?,
+        Value::I64(0)
+    );
     Ok(())
 }
 
@@ -77,7 +89,10 @@ fn end_to_end_tuple_and_index() -> Result<()> {
 #[test]
 fn end_to_end_host_function_and_handle() -> Result<()> {
     #[derive(Debug)]
-    struct Order { total: f64, vip: bool }
+    struct Order {
+        total: f64,
+        vip: bool,
+    }
 
     let mut engine = Engine::new();
     engine.register_fn(
@@ -95,7 +110,10 @@ fn end_to_end_host_function_and_handle() -> Result<()> {
     engine.register_type::<Order>()?;
 
     let script = engine.load_file("examples/risk.bk")?;
-    let order = Value::handle(Order { total: 200.0, vip: true });
+    let order = Value::handle(Order {
+        total: 200.0,
+        vip: true,
+    });
     let result = engine.call(&script, "check", vec![order, Value::F64(1000.0)])?;
     assert_eq!(
         result,
@@ -113,11 +131,17 @@ fn hot_reload_swaps_implementation() -> Result<()> {
 
     let engine = Engine::new();
     let mut script = engine.load_file(&path)?;
-    assert_eq!(engine.call(&script, "price", vec![Value::I64(10)])?, Value::I64(20));
+    assert_eq!(
+        engine.call(&script, "price", vec![Value::I64(10)])?,
+        Value::I64(20)
+    );
 
     std::fs::write(&path, "func price(x) { x * 3 }\n").unwrap();
     engine.reload(&mut script, &path)?;
-    assert_eq!(engine.call(&script, "price", vec![Value::I64(10)])?, Value::I64(30));
+    assert_eq!(
+        engine.call(&script, "price", vec![Value::I64(10)])?,
+        Value::I64(30)
+    );
 
     std::fs::remove_dir_all(&dir).unwrap();
     Ok(())
@@ -136,7 +160,9 @@ fn overflow_is_an_error_not_a_panic() -> Result<()> {
 #[test]
 fn type_conflict_is_rejected() {
     let engine = Engine::new();
-    let err = engine.load_str("func bad() { let x = 1\nx = \"str\"\nx }").unwrap_err();
+    let err = engine
+        .load_str("func bad() { let x = 1\nx = \"str\"\nx }")
+        .unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Type);
 }
 
@@ -170,9 +196,7 @@ fn vm_string_comparison() -> Result<()> {
 fn vm_short_circuit_avoids_division_by_zero() -> Result<()> {
     let engine = Engine::new();
     // `false && (1/0 > 0)` must NOT evaluate the right side.
-    let script = engine.load_str(
-        "func safe() { false && 1 / 0 > 0 }",
-    )?;
+    let script = engine.load_str("func safe() { false && 1 / 0 > 0 }")?;
     assert_eq!(engine.call(&script, "safe", vec![])?, Value::Bool(false));
     // True || rhs likewise short-circuits.
     let script2 = engine.load_str("func safe2() { true || 1 / 0 > 0 }")?;
@@ -183,9 +207,7 @@ fn vm_short_circuit_avoids_division_by_zero() -> Result<()> {
 #[test]
 fn vm_gas_limit_stops_infinite_loop() -> Result<()> {
     let engine = Engine::new().with_limits(5_000, 64);
-    let script = engine.load_str(
-        "func spin() { let x = 0\n while x >= 0 { x = x + 1 }\n x }",
-    )?;
+    let script = engine.load_str("func spin() { let x = 0\n while x >= 0 { x = x + 1 }\n x }")?;
     let err = engine.call(&script, "spin", vec![]).unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Runtime);
     assert!(err.message.contains("gas") || err.message.contains("step"));
@@ -217,7 +239,10 @@ fn vm_nested_calls_and_builtins() -> Result<()> {
         "#,
     )?;
     // twice(8) = 10, sqrt(10) ≈ 3.16, to_i64 → 3
-    assert_eq!(engine.call(&script, "calc", vec![Value::I64(8)])?, Value::I64(3));
+    assert_eq!(
+        engine.call(&script, "calc", vec![Value::I64(8)])?,
+        Value::I64(3)
+    );
     Ok(())
 }
 
@@ -246,14 +271,20 @@ fn vm_tuple_roundtrip_through_host() -> Result<()> {
 #[test]
 fn panicking_host_fn_returns_error_instead_of_unwinding() -> Result<()> {
     let mut engine = Engine::new();
-    engine.register_fn("boom", vec![], Ty::I64, |_| panic!("host callback exploded"))?;
+    engine.register_fn("boom", vec![], Ty::I64, |_| {
+        panic!("host callback exploded")
+    })?;
     let script = engine.load_str("func go() { boom() }")?;
 
     // The panic must be caught at the call boundary and surfaced as an Err —
     // never propagated into the host's stack.
     let err = engine.call(&script, "go", vec![]).unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Runtime);
-    assert!(err.message.contains("internal panic"), "got: {}", err.message);
+    assert!(
+        err.message.contains("internal panic"),
+        "got: {}",
+        err.message
+    );
     Ok(())
 }
 
@@ -286,9 +317,15 @@ fn max_depth_stops_deep_recursion() -> Result<()> {
         }
         "#,
     )?;
-    let err = engine.call(&script, "recurse", vec![Value::I64(100)]).unwrap_err();
+    let err = engine
+        .call(&script, "recurse", vec![Value::I64(100)])
+        .unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Runtime);
-    assert!(err.message.contains("call depth limit"), "got: {}", err.message);
+    assert!(
+        err.message.contains("call depth limit"),
+        "got: {}",
+        err.message
+    );
     Ok(())
 }
 
@@ -375,7 +412,11 @@ fn string_concat_is_not_numeric_addition() -> Result<()> {
         "#,
     )?;
     assert_eq!(
-        engine.call(&script, "join", vec![Value::from("foo"), Value::from("bar")])?,
+        engine.call(
+            &script,
+            "join",
+            vec![Value::from("foo"), Value::from("bar")]
+        )?,
         Value::from("foobar")
     );
     assert_eq!(
@@ -398,7 +439,9 @@ fn to_str_accepts_scalars_and_rejects_heap_values() -> Result<()> {
         Value::from("12.5truex")
     );
 
-    let err = engine.load_str("func bad() { to_str((1, 2)) }").unwrap_err();
+    let err = engine
+        .load_str("func bad() { to_str((1, 2)) }")
+        .unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Type);
     assert!(err.message.contains("to_str"), "got: {}", err.message);
 
@@ -417,7 +460,11 @@ fn tuple_equality_is_a_compile_error() {
         .load_str("func f() { (1, 2) == (1, 2) }")
         .unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Type);
-    assert!(err.message.contains("equality comparison"), "got: {}", err.message);
+    assert!(
+        err.message.contains("equality comparison"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[test]
@@ -427,7 +474,11 @@ fn unit_equality_is_a_compile_error() {
         .load_str("func noop() { let x = 1 }\nfunc f() { noop() == noop() }")
         .unwrap_err();
     assert_eq!(err.kind, brook::ErrorKind::Type);
-    assert!(err.message.contains("equality comparison"), "got: {}", err.message);
+    assert!(
+        err.message.contains("equality comparison"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[test]

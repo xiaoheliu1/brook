@@ -50,16 +50,27 @@ pub enum Stmt {
         span: Span,
     },
     /// Reassignment to an existing variable: `x = expr`
-    Assign { name: String, value: Expr, span: Span },
+    Assign {
+        name: String,
+        value: Expr,
+        span: Span,
+    },
     Expr(Expr),
-    Return { value: Option<Expr>, span: Span },
+    Return {
+        value: Option<Expr>,
+        span: Span,
+    },
     If {
         cond: Expr,
         then: Block,
         otherwise: Option<Box<ElseBranch>>,
         span: Span,
     },
-    While { cond: Expr, body: Block, span: Span },
+    While {
+        cond: Expr,
+        body: Block,
+        span: Span,
+    },
     For {
         var: String,
         iter: ForIter,
@@ -67,15 +78,19 @@ pub enum Stmt {
         span: Span,
     },
     /// Leave the innermost enclosing loop.
-    Break { span: Span },
+    Break {
+        span: Span,
+    },
     /// Jump to the innermost enclosing loop's next iteration.
-    Continue { span: Span },
+    Continue {
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum ElseBranch {
     Block(Block),
-    ElseIf(Stmt),
+    ElseIf(Box<Stmt>),
 }
 
 /// What a `for` loop walks (ADR-018): a half-open integer range, or an
@@ -94,9 +109,22 @@ pub enum Expr {
     Bool(bool, Span),
     Str(String, Span),
     Var(String, Span),
-    Call { name: String, args: Vec<Expr>, span: Span },
-    Unary { op: UnOp, expr: Box<Expr>, span: Span },
-    Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr>, span: Span },
+    Call {
+        name: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
+    Unary {
+        op: UnOp,
+        expr: Box<Expr>,
+        span: Span,
+    },
+    Binary {
+        op: BinOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+        span: Span,
+    },
     /// `if cond {..} else {..}` used as a value.
     IfExpr {
         cond: Box<Expr>,
@@ -111,10 +139,18 @@ pub enum Expr {
     /// type from usage (first `push`, annotation, or context).
     Array(Vec<Expr>, Span),
     /// Tuple element access: `expr . 0`
-    Index { base: Box<Expr>, index: usize, span: Span },
+    Index {
+        base: Box<Expr>,
+        index: usize,
+        span: Span,
+    },
     /// Array indexing: `expr[i]` with a runtime index. Tuples are indexed
     /// with constant `.n` (see `Index`); this is the array counterpart.
-    DynIndex { base: Box<Expr>, index: Box<Expr>, span: Span },
+    DynIndex {
+        base: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

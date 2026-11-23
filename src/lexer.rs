@@ -26,7 +26,13 @@ impl<'a> Lexer<'a> {
     /// 约定式 import 会把多份源码按依赖顺序拼成一个编译单元，
     /// 每段的行号必须接续前一段，报错行号才能与拼接视图对齐。
     pub fn new_with_offset(src: &'a str, first_line: usize) -> Self {
-        Self { src: src.as_bytes(), pos: 0, line: first_line, col: 1, prev_dot: false }
+        Self {
+            src: src.as_bytes(),
+            pos: 0,
+            line: first_line,
+            col: 1,
+            prev_dot: false,
+        }
     }
 
     pub fn tokenize(mut self) -> Result<Vec<Token>> {
@@ -149,7 +155,10 @@ impl<'a> Lexer<'a> {
         // Newline
         if c == b'\n' {
             self.bump();
-            return Ok(Token::new(TokenKind::Newline, self.span_from(start, line, col)));
+            return Ok(Token::new(
+                TokenKind::Newline,
+                self.span_from(start, line, col),
+            ));
         }
 
         // Identifier or keyword
@@ -161,7 +170,9 @@ impl<'a> Lexer<'a> {
                     break;
                 }
             }
-            let text = std::str::from_utf8(&self.src[start..self.pos]).unwrap().to_string();
+            let text = std::str::from_utf8(&self.src[start..self.pos])
+                .unwrap()
+                .to_string();
             let kind = match text.as_str() {
                 "func" => TokenKind::Func,
                 "import" => TokenKind::Import,
@@ -225,7 +236,10 @@ impl<'a> Lexer<'a> {
                 })?)
             } else {
                 TokenKind::Int(text.parse().map_err(|_| {
-                    Error::lex("integer literal overflows i64", self.span_from(start, line, col))
+                    Error::lex(
+                        "integer literal overflows i64",
+                        self.span_from(start, line, col),
+                    )
                 })?)
             };
             return Ok(Token::new(kind, self.span_from(start, line, col)));
@@ -266,22 +280,52 @@ impl<'a> Lexer<'a> {
                 }
             }
             let s = String::from_utf8(bytes).map_err(|_| {
-                Error::lex("invalid UTF-8 in string literal", self.span_from(start, line, col))
+                Error::lex(
+                    "invalid UTF-8 in string literal",
+                    self.span_from(start, line, col),
+                )
             })?;
-            return Ok(Token::new(TokenKind::Str(s), self.span_from(start, line, col)));
+            return Ok(Token::new(
+                TokenKind::Str(s),
+                self.span_from(start, line, col),
+            ));
         }
 
         // Operators and delimiters (longest match first).
         let two = [self.peek(), self.peek2()];
         let kind = match two {
-            [Some(b'='), Some(b'=')] => { self.bump(); TokenKind::Eq }
-            [Some(b'!'), Some(b'=')] => { self.bump(); TokenKind::NotEq }
-            [Some(b'<'), Some(b'=')] => { self.bump(); TokenKind::LtEq }
-            [Some(b'>'), Some(b'=')] => { self.bump(); TokenKind::GtEq }
-            [Some(b'&'), Some(b'&')] => { self.bump(); TokenKind::AndAnd }
-            [Some(b'|'), Some(b'|')] => { self.bump(); TokenKind::OrOr }
-            [Some(b'.'), Some(b'.')] => { self.bump(); TokenKind::DotDot }
-            [Some(b'-'), Some(b'>')] => { self.bump(); TokenKind::Arrow }
+            [Some(b'='), Some(b'=')] => {
+                self.bump();
+                TokenKind::Eq
+            }
+            [Some(b'!'), Some(b'=')] => {
+                self.bump();
+                TokenKind::NotEq
+            }
+            [Some(b'<'), Some(b'=')] => {
+                self.bump();
+                TokenKind::LtEq
+            }
+            [Some(b'>'), Some(b'=')] => {
+                self.bump();
+                TokenKind::GtEq
+            }
+            [Some(b'&'), Some(b'&')] => {
+                self.bump();
+                TokenKind::AndAnd
+            }
+            [Some(b'|'), Some(b'|')] => {
+                self.bump();
+                TokenKind::OrOr
+            }
+            [Some(b'.'), Some(b'.')] => {
+                self.bump();
+                TokenKind::DotDot
+            }
+            [Some(b'-'), Some(b'>')] => {
+                self.bump();
+                TokenKind::Arrow
+            }
             _ => match c {
                 b'+' => TokenKind::Plus,
                 b'-' => TokenKind::Minus,
@@ -352,18 +396,26 @@ mod tests {
     use super::*;
 
     fn kinds(src: &str) -> Vec<TokenKind> {
-        Lexer::new(src).tokenize().unwrap().into_iter().map(|t| t.kind).collect()
+        Lexer::new(src)
+            .tokenize()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect()
     }
 
     #[test]
     fn lexes_simple_expression() {
-        assert_eq!(kinds("let x = 42"), vec![
-            TokenKind::Let,
-            TokenKind::Ident("x".into()),
-            TokenKind::Assign,
-            TokenKind::Int(42),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds("let x = 42"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Ident("x".into()),
+                TokenKind::Assign,
+                TokenKind::Int(42),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
@@ -404,7 +456,10 @@ mod tests {
     #[test]
     fn skips_comments() {
         let k = kinds("// comment\n42");
-        assert_eq!(k, vec![TokenKind::Newline, TokenKind::Int(42), TokenKind::Eof]);
+        assert_eq!(
+            k,
+            vec![TokenKind::Newline, TokenKind::Int(42), TokenKind::Eof]
+        );
     }
 
     #[test]
@@ -504,7 +559,10 @@ mod tests {
     #[test]
     fn tracks_line_and_col() {
         let toks = Lexer::new("a\n  b").tokenize().unwrap();
-        let b = toks.iter().find(|t| matches!(t.kind, TokenKind::Ident(ref s) if s == "b")).unwrap();
+        let b = toks
+            .iter()
+            .find(|t| matches!(t.kind, TokenKind::Ident(ref s) if s == "b"))
+            .unwrap();
         assert_eq!(b.span.line, 2);
         assert_eq!(b.span.col, 3);
     }

@@ -54,11 +54,21 @@ func describe(score: f64) { "score=" + to_str(to_i64(score)) }
 "#;
 
 fn val_i64(n: i64) -> MsVal {
-    MsVal { tag: MS_VAL_I64, i: n, f: 0.0, s: std::ptr::null() }
+    MsVal {
+        tag: MS_VAL_I64,
+        i: n,
+        f: 0.0,
+        s: std::ptr::null(),
+    }
 }
 
 fn val_f64(x: f64) -> MsVal {
-    MsVal { tag: MS_VAL_F64, i: 0, f: x, s: std::ptr::null() }
+    MsVal {
+        tag: MS_VAL_F64,
+        i: 0,
+        f: x,
+        s: std::ptr::null(),
+    }
 }
 
 fn cstr(s: &str) -> CString {
@@ -89,7 +99,10 @@ fn main() -> brook::Result<()> {
         None => DEFAULT_SCRIPT.to_string(),
     };
     let script = engine.load_str(&source)?;
-    let order = Value::from(Opaque::new(Order { total: 200.0, vip: true }));
+    let order = Value::from(Opaque::new(Order {
+        total: 200.0,
+        vip: true,
+    }));
     let result = engine.call(&script, "check", vec![order, Value::F64(1000.0)])?;
     println!(
         "brook {} / {}: check(Order{{200,vip}}, 1000) = {}",
@@ -116,7 +129,12 @@ unsafe fn handle_api_demo() -> brook::Result<()> {
 
     // Multi-argument i64 call.
     let args = [val_i64(1), val_i64(2), val_i64(3)];
-    let mut out = MsValOut { tag: 0, i: 0, f: 0.0, len: 0 };
+    let mut out = MsValOut {
+        tag: 0,
+        i: 0,
+        f: 0.0,
+        len: 0,
+    };
     let func = cstr("add3");
     let code = ms_script_call(
         ptr,

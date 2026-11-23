@@ -41,7 +41,12 @@ pub struct TraceFrame {
 
 impl Error {
     pub fn new(kind: ErrorKind, message: impl Into<String>, span: Option<Span>) -> Self {
-        Self { kind, message: message.into(), span, trace: Vec::new() }
+        Self {
+            kind,
+            message: message.into(),
+            span,
+            trace: Vec::new(),
+        }
     }
 
     pub fn lex(message: impl Into<String>, span: Span) -> Self {

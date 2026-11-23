@@ -22,7 +22,10 @@ fn compile_err(src: &str) -> String {
 
 #[test]
 fn script_functions_cannot_shadow_builtins() {
-    for name in ["abs", "min", "max", "sqrt", "floor", "pow", "len", "contains", "substr", "to_str", "to_i64", "to_f64"] {
+    for name in [
+        "abs", "min", "max", "sqrt", "floor", "pow", "len", "contains", "substr", "to_str",
+        "to_i64", "to_f64",
+    ] {
         let src = format!("func {name}(x) {{ x }}");
         let msg = compile_err(&src);
         assert!(msg.contains("reserved built-in"), "{name}: {msg}");
@@ -41,7 +44,9 @@ fn script_functions_cannot_shadow_builtins() {
         Value::F64(3.5)
     );
     assert_eq!(
-        engine.call(&script, "g", vec![Value::from("abcd")]).unwrap(),
+        engine
+            .call(&script, "g", vec![Value::from("abcd")])
+            .unwrap(),
         Value::I64(6)
     );
 }
@@ -55,7 +60,11 @@ fn host_name_collision_message_is_distinct() {
         .register_fn("total", vec![], brook::ty::Ty::I64, |_| Ok(Value::I64(0)))
         .unwrap();
     let err = engine.load_str("func total() { 1 }").unwrap_err();
-    assert!(err.message.contains("already defined by the host"), "got: {}", err.message);
+    assert!(
+        err.message.contains("already defined by the host"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[test]
@@ -77,5 +86,8 @@ fn unit_literal_is_unit_not_a_zero_tuple() {
 
     // The type annotation `()` is the unit type.
     let script = engine.load_str("func f(x: ()) { x }").unwrap();
-    assert_eq!(engine.call(&script, "f", vec![Value::Unit]).unwrap(), Value::Unit);
+    assert_eq!(
+        engine.call(&script, "f", vec![Value::Unit]).unwrap(),
+        Value::Unit
+    );
 }

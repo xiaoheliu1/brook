@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use brook::engine::Engine;
 use brook::value::Value;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 /// Reference Rust implementation. `#[inline(never)]` + black_box keep LLVM
 /// from constant-folding the recursion into closed form, giving a fair
@@ -26,16 +26,10 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let n = 18;
 
-    c.bench_function("1_rust fib(18)", |b| {
-        b.iter(|| rust_fib(black_box(n)))
-    });
+    c.bench_function("1_rust fib(18)", |b| b.iter(|| rust_fib(black_box(n))));
 
     c.bench_function("2_brook VM fib(18)", |b| {
-        b.iter(|| {
-            engine
-                .call(&script, "fib", vec![Value::I64(n)])
-                .unwrap()
-        })
+        b.iter(|| engine.call(&script, "fib", vec![Value::I64(n)]).unwrap())
     });
 
     // Loop-heavy (non-recursive) workload — more representative of rules/data
@@ -57,12 +51,20 @@ fn criterion_benchmark(c: &mut Criterion) {
         black_box(t)
     }
     assert_eq!(
-        engine.call(&loop_script, "sum_to", vec![Value::I64(nloop)]).unwrap(),
+        engine
+            .call(&loop_script, "sum_to", vec![Value::I64(nloop)])
+            .unwrap(),
         Value::I64(rust_sum(nloop))
     );
-    c.bench_function("3_rust sum_to(200)", |b| b.iter(|| rust_sum(black_box(nloop))));
+    c.bench_function("3_rust sum_to(200)", |b| {
+        b.iter(|| rust_sum(black_box(nloop)))
+    });
     c.bench_function("4_brook VM sum_to(200)", |b| {
-        b.iter(|| engine.call(&loop_script, "sum_to", vec![Value::I64(nloop)]).unwrap())
+        b.iter(|| {
+            engine
+                .call(&loop_script, "sum_to", vec![Value::I64(nloop)])
+                .unwrap()
+        })
     });
 
     let src = std::fs::read_to_string("examples/fib.bk").unwrap();

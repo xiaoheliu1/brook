@@ -75,7 +75,10 @@ impl Value {
     pub fn as_array(&self) -> Result<std::cell::Ref<'_, Vec<Value>>> {
         match self {
             Value::Arr(items) => Ok(items.borrow()),
-            _ => Err(Error::runtime(format!("expected array, found {}", self.ty()))),
+            _ => Err(Error::runtime(format!(
+                "expected array, found {}",
+                self.ty()
+            ))),
         }
     }
 
@@ -116,7 +119,10 @@ impl Value {
     pub fn as_bool(&self) -> Result<bool> {
         match self {
             Value::Bool(b) => Ok(*b),
-            _ => Err(Error::runtime(format!("expected bool, found {}", self.ty()))),
+            _ => Err(Error::runtime(format!(
+                "expected bool, found {}",
+                self.ty()
+            ))),
         }
     }
 
@@ -136,7 +142,10 @@ impl Value {
                     h.type_name
                 ))
             }),
-            _ => Err(Error::runtime(format!("expected handle, found {}", self.ty()))),
+            _ => Err(Error::runtime(format!(
+                "expected handle, found {}",
+                self.ty()
+            ))),
         }
     }
 }
@@ -163,19 +172,29 @@ impl fmt::Display for Value {
 }
 
 impl From<i64> for Value {
-    fn from(v: i64) -> Self { Value::I64(v) }
+    fn from(v: i64) -> Self {
+        Value::I64(v)
+    }
 }
 impl From<f64> for Value {
-    fn from(v: f64) -> Self { Value::F64(v) }
+    fn from(v: f64) -> Self {
+        Value::F64(v)
+    }
 }
 impl From<bool> for Value {
-    fn from(v: bool) -> Self { Value::Bool(v) }
+    fn from(v: bool) -> Self {
+        Value::Bool(v)
+    }
 }
 impl From<String> for Value {
-    fn from(v: String) -> Self { Value::Str(Rc::from(v)) }
+    fn from(v: String) -> Self {
+        Value::Str(Rc::from(v))
+    }
 }
 impl From<&str> for Value {
-    fn from(v: &str) -> Self { Value::Str(Rc::from(v)) }
+    fn from(v: &str) -> Self {
+        Value::Str(Rc::from(v))
+    }
 }
 impl<T> From<Vec<T>> for Value
 where

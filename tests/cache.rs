@@ -51,7 +51,10 @@ fn sbc_roundtrip_preserves_program_and_behavior() -> brook::Result<()> {
     engine.save_sbc(&script, &path)?;
     let loaded = engine.load_sbc(&path)?;
 
-    assert_eq!(format!("{:?}", script.code.funcs), format!("{:?}", loaded.code.funcs));
+    assert_eq!(
+        format!("{:?}", script.code.funcs),
+        format!("{:?}", loaded.code.funcs)
+    );
     assert_eq!(script.code.strings, loaded.code.strings);
     assert_eq!(script.code.ids, loaded.code.ids);
     assert_eq!(script.sigs.len(), loaded.sigs.len());
@@ -96,7 +99,11 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
         Op::DivI64 { dst: 1, a: 2, b: 3 },
         Op::ModI64 { dst: 1, a: 2, b: 3 },
         Op::NegI64 { dst: 1, src: 2 },
-        Op::AddI64Imm { dst: 1, src: 2, imm: -7 },
+        Op::AddI64Imm {
+            dst: 1,
+            src: 2,
+            imm: -7,
+        },
         Op::AddF64 { dst: 1, a: 2, b: 3 },
         Op::SubF64 { dst: 1, a: 2, b: 3 },
         Op::MulF64 { dst: 1, a: 2, b: 3 },
@@ -131,30 +138,126 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
         Op::Concat { dst: 1, a: 2, b: 3 },
         Op::Jump { target: 3 },
         Op::JumpIfFalse { cond: 1, target: 3 },
-        Op::JmpIfEqI64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfNeI64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfLtI64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfLeI64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfGtI64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfGeI64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfEqF64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfNeF64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfLtF64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfLeF64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfGtF64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfGeF64 { a: 1, b: 2, target: 3 },
-        Op::JmpIfEqI64Imm { a: 1, imm: -7, target: 3 },
-        Op::JmpIfNeI64Imm { a: 1, imm: -7, target: 3 },
-        Op::JmpIfLtI64Imm { a: 1, imm: -7, target: 3 },
-        Op::JmpIfLeI64Imm { a: 1, imm: -7, target: 3 },
-        Op::JmpIfGtI64Imm { a: 1, imm: -7, target: 3 },
-        Op::JmpIfGeI64Imm { a: 1, imm: -7, target: 3 },
-        Op::CallScript { func: 0, args: three(), dst: 4 },
-        Op::CallHost { func: 0, args: three(), dst: 4 },
-        Op::CallBuiltin { func: 0, args: three(), dst: 4 },
-        Op::ContainsTyped { hay: 1, needle: 2, dst: 4, ty: 0 },
-        Op::MakeTuple { dst: 4, elems: three() },
-        Op::GetTuple { dst: 4, base: 1, index: 1 },
+        Op::JmpIfEqI64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfNeI64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfLtI64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfLeI64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfGtI64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfGeI64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfEqF64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfNeF64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfLtF64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfLeF64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfGtF64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfGeF64 {
+            a: 1,
+            b: 2,
+            target: 3,
+        },
+        Op::JmpIfEqI64Imm {
+            a: 1,
+            imm: -7,
+            target: 3,
+        },
+        Op::JmpIfNeI64Imm {
+            a: 1,
+            imm: -7,
+            target: 3,
+        },
+        Op::JmpIfLtI64Imm {
+            a: 1,
+            imm: -7,
+            target: 3,
+        },
+        Op::JmpIfLeI64Imm {
+            a: 1,
+            imm: -7,
+            target: 3,
+        },
+        Op::JmpIfGtI64Imm {
+            a: 1,
+            imm: -7,
+            target: 3,
+        },
+        Op::JmpIfGeI64Imm {
+            a: 1,
+            imm: -7,
+            target: 3,
+        },
+        Op::CallScript {
+            func: 0,
+            args: three(),
+            dst: 4,
+        },
+        Op::CallHost {
+            func: 0,
+            args: three(),
+            dst: 4,
+        },
+        Op::CallBuiltin {
+            func: 0,
+            args: three(),
+            dst: 4,
+        },
+        Op::ContainsTyped {
+            hay: 1,
+            needle: 2,
+            dst: 4,
+            ty: 0,
+        },
+        Op::MakeTuple {
+            dst: 4,
+            elems: three(),
+        },
+        Op::GetTuple {
+            dst: 4,
+            base: 1,
+            index: 1,
+        },
         Op::Ret { src: 4 },
     ];
     assert_eq!(ops.len(), 72, "update this test when adding opcodes");
@@ -162,11 +265,22 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
     let mut ids = HashMap::new();
     ids.insert("ops".to_string(), 0u16);
     let fp: HostFingerprint = vec![("host".into(), 0, vec![], Ty::Unit)];
-    let code = ops.iter().map(|&op| Instr { op, line: 7, col: 9 }).collect();
+    let code = ops
+        .iter()
+        .map(|&op| Instr {
+            op,
+            line: 7,
+            col: 9,
+        })
+        .collect();
     let script = Script {
         code: Program {
             funcs: vec![Function {
-                name: "ops".into(), code, nregs: 8, params: vec![], ret: Ty::Unit,
+                name: "ops".into(),
+                code,
+                nregs: 8,
+                params: vec![],
+                ret: Ty::Unit,
             }],
             ids,
             strings: vec![Rc::from("constant")],
@@ -183,7 +297,10 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
     };
     let bytes = cache::encode(&script, &fp);
     let back = cache::decode(&bytes, &fp)?;
-    assert_eq!(format!("{:?}", script.code.funcs), format!("{:?}", back.code.funcs));
+    assert_eq!(
+        format!("{:?}", script.code.funcs),
+        format!("{:?}", back.code.funcs)
+    );
     assert_eq!(script.code.strings, back.code.strings);
     Ok(())
 }
@@ -197,25 +314,37 @@ fn load_cached_rebuilds_on_change_and_cache_is_self_contained() -> brook::Result
 
     std::fs::write(&path, "func price(x) { x * 2 }\n").unwrap();
     let mut script = engine.load_cached(&path)?;
-    assert_eq!(engine.call(&script, "price", vec![Value::I64(10)])?, Value::I64(20));
+    assert_eq!(
+        engine.call(&script, "price", vec![Value::I64(10)])?,
+        Value::I64(20)
+    );
     assert!(sbc.exists(), "first load should write a cache");
 
     // Corrupt the cache: loading must fall back to a normal compile, not fail.
     std::fs::write(&sbc, b"garbage").unwrap();
     script = engine.load_cached(&path)?;
-    assert_eq!(engine.call(&script, "price", vec![Value::I64(10)])?, Value::I64(20));
+    assert_eq!(
+        engine.call(&script, "price", vec![Value::I64(10)])?,
+        Value::I64(20)
+    );
 
     // Change the source: the hash mismatch must force a rebuild + refresh.
     std::fs::write(&path, "func price(x) { x * 3 }\n").unwrap();
     engine.reload_cached(&mut script, &path)?;
-    assert_eq!(engine.call(&script, "price", vec![Value::I64(10)])?, Value::I64(30));
+    assert_eq!(
+        engine.call(&script, "price", vec![Value::I64(10)])?,
+        Value::I64(30)
+    );
 
     // The .sbc alone is enough to load (no source file needed).
     let standalone = dir.join("standalone.sbc");
     std::fs::copy(&sbc, &standalone).unwrap();
     std::fs::remove_file(&path).unwrap();
     let from_cache = engine.load_sbc(&standalone)?;
-    assert_eq!(engine.call(&from_cache, "price", vec![Value::I64(10)])?, Value::I64(30));
+    assert_eq!(
+        engine.call(&from_cache, "price", vec![Value::I64(10)])?,
+        Value::I64(30)
+    );
     Ok(())
 }
 
@@ -232,12 +361,20 @@ fn cache_is_rejected_when_host_registry_changed() -> brook::Result<()> {
     let mut e2 = Engine::new();
     register_fn!(e2, "f", (f64) -> f64, |x| x + 1.0)?;
     let err = e2.load_sbc(&path).unwrap_err();
-    assert!(err.message.contains("host registry changed"), "got: {}", err.message);
+    assert!(
+        err.message.contains("host registry changed"),
+        "got: {}",
+        err.message
+    );
 
     // Missing host function (different registry set) is also rejected.
     let e3 = Engine::new();
     let err = e3.load_sbc(&path).unwrap_err();
-    assert!(err.message.contains("host registry changed"), "got: {}", err.message);
+    assert!(
+        err.message.contains("host registry changed"),
+        "got: {}",
+        err.message
+    );
 
     // Identical registry accepts the cache.
     let mut e4 = Engine::new();
@@ -304,7 +441,10 @@ fn compile_cached_needs_no_source_file_on_disk() -> brook::Result<()> {
 
     let src = "func price(x) { x * 2 }";
     let first = engine.compile_cached(src, "<assets>", &cache)?;
-    assert_eq!(engine.call(&first, "price", vec![Value::I64(10)])?, Value::I64(20));
+    assert_eq!(
+        engine.call(&first, "price", vec![Value::I64(10)])?,
+        Value::I64(20)
+    );
     assert!(cache.exists());
 
     // Second load with the same bytes hits the cache — no source file exists.
@@ -312,12 +452,21 @@ fn compile_cached_needs_no_source_file_on_disk() -> brook::Result<()> {
     // not the name baked into the cached bytes.
     let second = engine.compile_cached(src, "<memory:price-v2>", &cache)?;
     assert_eq!(second.name, "<memory:price-v2>");
-    assert_eq!(format!("{:?}", first.code.funcs), format!("{:?}", second.code.funcs));
-    assert_eq!(engine.call(&second, "price", vec![Value::I64(10)])?, Value::I64(20));
+    assert_eq!(
+        format!("{:?}", first.code.funcs),
+        format!("{:?}", second.code.funcs)
+    );
+    assert_eq!(
+        engine.call(&second, "price", vec![Value::I64(10)])?,
+        Value::I64(20)
+    );
 
     // Changed source invalidates the hash and forces a rebuild.
     let third = engine.compile_cached("func price(x) { x * 7 }", "<assets>", &cache)?;
-    assert_eq!(engine.call(&third, "price", vec![Value::I64(10)])?, Value::I64(70));
+    assert_eq!(
+        engine.call(&third, "price", vec![Value::I64(10)])?,
+        Value::I64(70)
+    );
     Ok(())
 }
 
@@ -337,14 +486,20 @@ fn typed_contains_survives_sbc_roundtrip() -> brook::Result<()> {
         contains(xs, [2])
     }"#;
     let script = engine.load_str(src)?;
-    assert!(!script.code.types.is_empty(), "codegen must intern the element types");
+    assert!(
+        !script.code.types.is_empty(),
+        "codegen must intern the element types"
+    );
 
     let path = temp_dir("typed_contains").join("prog.sbc");
     engine.save_sbc(&script, &path)?;
     let loaded = engine.load_sbc(&path)?;
 
     assert_eq!(script.code.types, loaded.code.types);
-    assert_eq!(format!("{:?}", script.code.funcs), format!("{:?}", loaded.code.funcs));
+    assert_eq!(
+        format!("{:?}", script.code.funcs),
+        format!("{:?}", loaded.code.funcs)
+    );
     for func in ["f", "nested"] {
         assert_eq!(
             engine.call(&script, func, vec![])?,
@@ -368,12 +523,19 @@ fn sbc_rejects_out_of_range_contains_type_id() -> brook::Result<()> {
     // Tag 76 is `ContainsTyped`; its wire record puts the type id in `imm`
     // right after (tag, line, col, r0, r1, r2) = 2+4+4+6 bytes.
     let needle = b"\x4c\x00"; // 76u16 little-endian
-    let pos = bytes.windows(2).position(|w| w == needle).expect("ContainsTyped tag");
+    let pos = bytes
+        .windows(2)
+        .position(|w| w == needle)
+        .expect("ContainsTyped tag");
     let imm = pos + 2 + 4 + 4 + 6;
     bytes[imm..imm + 8].copy_from_slice(&99u64.to_le_bytes());
 
     let err = cache::decode(&bytes, &fp).unwrap_err();
-    assert!(err.message.contains("type id out of range"), "{}", err.message);
+    assert!(
+        err.message.contains("type id out of range"),
+        "{}",
+        err.message
+    );
     Ok(())
 }
 
@@ -403,7 +565,9 @@ fn deterministic_cache_corruption_never_panics() -> brook::Result<()> {
         let mut mutated = bytes.clone();
         let flips = 1 + (round % 4);
         for _ in 0..flips {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let pos = (seed as usize) % mutated.len();
             mutated[pos] ^= (seed >> 33) as u8 | 1;
         }
@@ -411,10 +575,22 @@ fn deterministic_cache_corruption_never_panics() -> brook::Result<()> {
     }
 
     // Pure random-looking payloads of various lengths.
-    for len in [0usize, 1, 3, 7, 16, 64, 256, bytes.len() - 1, bytes.len() + 8] {
+    for len in [
+        0usize,
+        1,
+        3,
+        7,
+        16,
+        64,
+        256,
+        bytes.len() - 1,
+        bytes.len() + 8,
+    ] {
         let mut payload = Vec::with_capacity(len);
         for _ in 0..len {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             payload.push((seed >> 56) as u8);
         }
         cases.push(payload);

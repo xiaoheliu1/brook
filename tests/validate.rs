@@ -39,29 +39,90 @@ fn registers_and_targets_are_checked() -> brook::Result<()> {
     assert!(rejected(Op::Jump { target: 1 }, 1, 0));
     assert!(validate(&program(Op::Jump { target: 0 }, 1), 0).is_ok());
     assert!(rejected(Op::JumpIfFalse { cond: 2, target: 0 }, 2, 0));
-    assert!(rejected(Op::JmpIfGeI64 { a: 0, b: 1, target: 1 }, 2, 0));
+    assert!(rejected(
+        Op::JmpIfGeI64 {
+            a: 0,
+            b: 1,
+            target: 1
+        },
+        2,
+        0
+    ));
     Ok(())
 }
 
 #[test]
 fn ids_and_pools_are_checked() -> brook::Result<()> {
     let no_args = Regs::new(&[]);
-    assert!(rejected(Op::CallScript { func: 1, args: no_args, dst: 0 }, 1, 0));
-    assert!(rejected(Op::CallHost { func: 1, args: no_args, dst: 0 }, 1, 1));
-    assert!(validate(&program(Op::CallHost { func: 0, args: no_args, dst: 0 }, 1), 1).is_ok());
     assert!(rejected(
-        Op::CallBuiltin { func: 200, args: Regs::new(&[0]), dst: 0 },
+        Op::CallScript {
+            func: 1,
+            args: no_args,
+            dst: 0
+        },
+        1,
+        0
+    ));
+    assert!(rejected(
+        Op::CallHost {
+            func: 1,
+            args: no_args,
+            dst: 0
+        },
+        1,
+        1
+    ));
+    assert!(validate(
+        &program(
+            Op::CallHost {
+                func: 0,
+                args: no_args,
+                dst: 0
+            },
+            1
+        ),
+        1
+    )
+    .is_ok());
+    assert!(rejected(
+        Op::CallBuiltin {
+            func: 200,
+            args: Regs::new(&[0]),
+            dst: 0
+        },
         1,
         0
     ));
     assert!(validate(
-        &program(Op::CallBuiltin { func: builtin::LEN, args: Regs::new(&[0]), dst: 0 }, 1),
+        &program(
+            Op::CallBuiltin {
+                func: builtin::LEN,
+                args: Regs::new(&[0]),
+                dst: 0
+            },
+            1
+        ),
         0
     )
     .is_ok());
     assert!(rejected(Op::ConstStr { dst: 0, id: 1 }, 1, 0));
-    assert!(rejected(Op::MakeTuple { dst: 0, elems: Regs::new(&[2]) }, 2, 0));
-    assert!(rejected(Op::GetTuple { dst: 0, base: 2, index: 0 }, 2, 0));
+    assert!(rejected(
+        Op::MakeTuple {
+            dst: 0,
+            elems: Regs::new(&[2])
+        },
+        2,
+        0
+    ));
+    assert!(rejected(
+        Op::GetTuple {
+            dst: 0,
+            base: 2,
+            index: 0
+        },
+        2,
+        0
+    ));
 
     let mut p = program(Op::Ret { src: 0 }, 1);
     p.ids.insert("ghost".into(), 9);
@@ -102,7 +163,11 @@ fn call_script_args_stay_inside_the_callee_window() -> brook::Result<()> {
         name: "caller".into(),
         code: vec![
             Instr::new(
-                Op::CallScript { func: 1, args: Regs::new(args), dst: 0 },
+                Op::CallScript {
+                    func: 1,
+                    args: Regs::new(args),
+                    dst: 0,
+                },
                 Span::synthetic(),
             ),
             Instr::new(Op::Ret { src: 0 }, Span::synthetic()),
@@ -121,7 +186,8 @@ fn call_script_args_stay_inside_the_callee_window() -> brook::Result<()> {
     // 2 args into a 1-register window: rejected.
     let err = validate(&p(caller_with(&[0, 0])), 0).unwrap_err();
     assert!(
-        err.message.contains("receives 2 args but its register window holds 1"),
+        err.message
+            .contains("receives 2 args but its register window holds 1"),
         "{}",
         err.message
     );

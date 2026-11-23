@@ -29,10 +29,36 @@ impl Rng {
 
 /// 随机 import 名字池：合法与非法各半（非法由路径护栏编译期拒绝）
 const NAMES: &[&str] = &[
-    "common", "util", "lib/net", "lib/deep/chain", "a", "b", "x1",
-    "中文库", "lib/中文", "a.", "a..", "..", "../escape", "/abs", "C:x",
-    "a\\b", "a//b", "NUL", "CON", "lib/NUL", "a:b", "", ".", "...",
-    "lib/../up", "lib/./cur", "\u{7}ctrl", "lib/ok.bk", "重复", "lib/重复",
+    "common",
+    "util",
+    "lib/net",
+    "lib/deep/chain",
+    "a",
+    "b",
+    "x1",
+    "中文库",
+    "lib/中文",
+    "a.",
+    "a..",
+    "..",
+    "../escape",
+    "/abs",
+    "C:x",
+    "a\\b",
+    "a//b",
+    "NUL",
+    "CON",
+    "lib/NUL",
+    "a:b",
+    "",
+    ".",
+    "...",
+    "lib/../up",
+    "lib/./cur",
+    "\u{7}ctrl",
+    "lib/ok.bk",
+    "重复",
+    "lib/重复",
 ];
 
 /// 随机函数体（引用其他 lib 函数制造真实的跨单元依赖图）
@@ -42,8 +68,16 @@ fn rand_body(rng: &mut Rng, names: &[String]) -> String {
     for _ in 0..n {
         let name = &names[rng.below(names.len())];
         match rng.below(3) {
-            0 => src.push_str(&format!("func f_{}(x) {{ x + {}}}\n", name.replace('/', "_"), rng.below(100))),
-            1 => src.push_str(&format!("func f_{}() {{ {}() }}\n", name.replace('/', "_"), name.replace('/', "_"))),
+            0 => src.push_str(&format!(
+                "func f_{}(x) {{ x + {}}}\n",
+                name.replace('/', "_"),
+                rng.below(100)
+            )),
+            1 => src.push_str(&format!(
+                "func f_{}() {{ {}() }}\n",
+                name.replace('/', "_"),
+                name.replace('/', "_")
+            )),
             _ => src.push_str(&format!("func f_{}(a, b) {{ a + b }}\n", rng.below(1000))),
         }
     }
@@ -54,7 +88,7 @@ fn rand_body(rng: &mut Rng, names: &[String]) -> String {
 /// Ok 或 Err——永不 panic、永不挂起。
 #[test]
 fn random_import_graphs_never_panic() {
-    let seed = 0xC0FFEE_1A_2B_3C;
+    let seed = 0xC0FF_EE1A_2B3C;
     let mut rng = Rng::new(seed);
 
     for round in 0..300u32 {
@@ -120,9 +154,7 @@ fn depth_and_width_limits_hold() {
         std::fs::write(dir.join(format!("chain_{i}.bk")), src).unwrap();
     }
     let engine = Engine::new();
-    let err = engine
-        .load_file(&dir.join("chain_11.bk"))
-        .unwrap_err();
+    let err = engine.load_file(dir.join("chain_11.bk")).unwrap_err();
     assert!(
         err.message.contains("import 链超过") || err.message.contains("import 数量超过上限"),
         "{}",
@@ -133,11 +165,15 @@ fn depth_and_width_limits_hold() {
     let mut src = String::new();
     for i in 0..31 {
         src.push_str(&format!("import \"w{i}\"\n"));
-        std::fs::write(dir.join(format!("w{i}.bk")), &format!("func w{i}() {{ {i} }}")).unwrap();
+        std::fs::write(
+            dir.join(format!("w{i}.bk")),
+            format!("func w{i}() {{ {i} }}"),
+        )
+        .unwrap();
     }
     src.push_str("\nfunc main() { w0() + w30() }");
     std::fs::write(dir.join("wide_main.bk"), src).unwrap();
-    let script = engine.load_file(&dir.join("wide_main.bk")).unwrap();
+    let script = engine.load_file(dir.join("wide_main.bk")).unwrap();
     assert_eq!(
         engine.call(&script, "main", vec![]).unwrap(),
         brook::Value::I64(30)
@@ -151,7 +187,7 @@ fn depth_and_width_limits_hold() {
     }
     src.push_str("\nfunc main() { 1 }");
     std::fs::write(dir.join("wide_over.bk"), src).unwrap();
-    let err = engine.load_file(&dir.join("wide_over.bk")).unwrap_err();
+    let err = engine.load_file(dir.join("wide_over.bk")).unwrap_err();
     assert!(
         err.message.contains("import 数量超过上限"),
         "{}",

@@ -18,17 +18,15 @@ use brook::value::Value;
 use brook::{Engine, ErrorKind, Handle};
 
 /// Run `src`'s `name` through the reference interpreter.
-fn eval_call(
-    src: &str,
-    name: &str,
-    args: Vec<Value>,
-    host: &HostRegistry,
-) -> brook::Result<Value> {
+fn eval_call(src: &str, name: &str, args: Vec<Value>, host: &HostRegistry) -> brook::Result<Value> {
     let tokens = Lexer::new(src).tokenize()?;
     let program = Parser::new(tokens).parse()?;
     let sigs = Checker::new(&host.signatures()).check(&program)?;
-    let funcs: HashMap<String, ast::FuncDecl> =
-        program.funcs.into_iter().map(|f| (f.name.clone(), f)).collect();
+    let funcs: HashMap<String, ast::FuncDecl> = program
+        .funcs
+        .into_iter()
+        .map(|f| (f.name.clone(), f))
+        .collect();
     let mut it = Interpreter::new(&funcs, host, &sigs, 1_000_000, 64);
     it.call(name, args)
 }
@@ -95,7 +93,11 @@ fn host_error_kind_is_preserved() -> brook::Result<()> {
         eval_call(src, "f", vec![], &host).unwrap_err()
     };
     assert_eq!(err.kind, ErrorKind::Io, "eval keeps the host's error kind");
-    assert!(err.message.contains("host function `boom`"), "{}", err.message);
+    assert!(
+        err.message.contains("host function `boom`"),
+        "{}",
+        err.message
+    );
     assert!(err.message.contains("disk on fire"), "{}", err.message);
 
     let mut engine = Engine::new();

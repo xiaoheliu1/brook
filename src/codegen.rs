@@ -6,9 +6,7 @@
 //! typed opcode. Variables are bound to register numbers at compile time, so
 //! the VM never hashes a name or inspects a runtime type tag on the hot path.
 
-use crate::ast::{
-    BinOp, Block, ElseBranch, Expr, ForIter, FuncDecl, Program, Stmt, UnOp,
-};
+use crate::ast::{BinOp, Block, ElseBranch, Expr, ForIter, FuncDecl, Program, Stmt, UnOp};
 use crate::error::{Error, Result};
 use crate::ir::{builtin, FuncId, Function, Instr, Op, Reg, Regs};
 use crate::span::Span;
@@ -245,7 +243,10 @@ impl<'a> Codegen<'a> {
         cg.env.push(HashMap::new());
         for (i, p) in f.params.iter().enumerate() {
             let ty = params.get(i).cloned().unwrap_or(Ty::I64);
-            cg.env.last_mut().unwrap().insert(p.name.clone(), (i as Reg, ty));
+            cg.env
+                .last_mut()
+                .unwrap()
+                .insert(p.name.clone(), (i as Reg, ty));
         }
         cg.next_reg = f.params.len() as u16;
 
@@ -254,7 +255,10 @@ impl<'a> Codegen<'a> {
 
         if cg.reg_overflow {
             return Err(Error::type_error(
-                format!("function `{}` is too complex (needs > 65535 registers)", f.name),
+                format!(
+                    "function `{}` is too complex (needs > 65535 registers)",
+                    f.name
+                ),
                 f.span,
             ));
         }
@@ -335,7 +339,10 @@ impl<'a> FuncCodegen<'a> {
     }
 
     fn bind(&mut self, name: &str, reg: Reg, ty: Ty) {
-        self.env.last_mut().unwrap().insert(name.to_string(), (reg, ty));
+        self.env
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string(), (reg, ty));
     }
 
     fn emit_const_unit(&mut self, span: Span) -> (Reg, Ty) {
@@ -386,12 +393,36 @@ impl<'a> FuncCodegen<'a> {
                     let fused = match op {
                         // Emit the negation: this branch is taken when cond
                         // is FALSE, matching `fuse_branch`'s convention.
-                        BinOp::Eq => Op::JmpIfNeI64Imm { a: lr, imm: n, target: usize::MAX },
-                        BinOp::NotEq => Op::JmpIfEqI64Imm { a: lr, imm: n, target: usize::MAX },
-                        BinOp::Lt => Op::JmpIfGeI64Imm { a: lr, imm: n, target: usize::MAX },
-                        BinOp::LtEq => Op::JmpIfGtI64Imm { a: lr, imm: n, target: usize::MAX },
-                        BinOp::Gt => Op::JmpIfLeI64Imm { a: lr, imm: n, target: usize::MAX },
-                        BinOp::GtEq => Op::JmpIfLtI64Imm { a: lr, imm: n, target: usize::MAX },
+                        BinOp::Eq => Op::JmpIfNeI64Imm {
+                            a: lr,
+                            imm: n,
+                            target: usize::MAX,
+                        },
+                        BinOp::NotEq => Op::JmpIfEqI64Imm {
+                            a: lr,
+                            imm: n,
+                            target: usize::MAX,
+                        },
+                        BinOp::Lt => Op::JmpIfGeI64Imm {
+                            a: lr,
+                            imm: n,
+                            target: usize::MAX,
+                        },
+                        BinOp::LtEq => Op::JmpIfGtI64Imm {
+                            a: lr,
+                            imm: n,
+                            target: usize::MAX,
+                        },
+                        BinOp::Gt => Op::JmpIfLeI64Imm {
+                            a: lr,
+                            imm: n,
+                            target: usize::MAX,
+                        },
+                        BinOp::GtEq => Op::JmpIfLtI64Imm {
+                            a: lr,
+                            imm: n,
+                            target: usize::MAX,
+                        },
                         _ => unreachable!("is_i64_cmp guard"),
                     };
                     return Ok(self.emit(fused, span));
@@ -406,7 +437,13 @@ impl<'a> FuncCodegen<'a> {
                 return Ok(idx);
             }
         }
-        Ok(self.emit(Op::JumpIfFalse { cond: cr, target: usize::MAX }, span))
+        Ok(self.emit(
+            Op::JumpIfFalse {
+                cond: cr,
+                target: usize::MAX,
+            },
+            span,
+        ))
     }
 
     /// Patch a branch emitted by `compile_cond_false` (or a plain `Jump`).
@@ -510,14 +547,27 @@ impl<'a> FuncCodegen<'a> {
                 self.emit(Op::Ret { src: r }, *span);
                 Ok(None)
             }
-            Stmt::If { cond, then, otherwise, span } => {
-                Ok(Some(self.compile_if(cond, then, otherwise.as_deref(), *span)?))
-            }
+            Stmt::If {
+                cond,
+                then,
+                otherwise,
+                span,
+            } => Ok(Some(self.compile_if(
+                cond,
+                then,
+                otherwise.as_deref(),
+                *span,
+            )?)),
             Stmt::While { cond, body, span } => {
                 self.compile_while(cond, body, *span)?;
                 Ok(Some(self.emit_const_unit(*span)))
             }
-            Stmt::For { var, iter, body, span } => {
+            Stmt::For {
+                var,
+                iter,
+                body,
+                span,
+            } => {
                 self.compile_for(var, iter, body, *span)?;
                 Ok(Some(self.emit_const_unit(*span)))
             }
@@ -557,7 +607,13 @@ impl<'a> FuncCodegen<'a> {
         let result = self.fresh();
 
         let (tr, tty, then_diverged) = self.compile_block_with_divergence(then)?;
-        self.emit(Op::Mov { dst: result, src: tr }, span);
+        self.emit(
+            Op::Mov {
+                dst: result,
+                src: tr,
+            },
+            span,
+        );
         let je = self.emit(Op::Jump { target: usize::MAX }, span);
 
         let else_start = self.code.len();
@@ -566,14 +622,23 @@ impl<'a> FuncCodegen<'a> {
         let (er, ety) = match otherwise {
             None => self.emit_const_unit(span),
             Some(ElseBranch::Block(b)) => self.compile_block(b)?,
-            Some(ElseBranch::ElseIf(s)) => match s {
-                Stmt::If { cond, then, otherwise, span } => {
-                    self.compile_if(cond, then, otherwise.as_deref(), *span)?
-                }
+            Some(ElseBranch::ElseIf(s)) => match s.as_ref() {
+                Stmt::If {
+                    cond,
+                    then,
+                    otherwise,
+                    span,
+                } => self.compile_if(cond, then, otherwise.as_deref(), *span)?,
                 _ => self.emit_const_unit(span),
             },
         };
-        self.emit(Op::Mov { dst: result, src: er }, span);
+        self.emit(
+            Op::Mov {
+                dst: result,
+                src: er,
+            },
+            span,
+        );
 
         let end = self.code.len();
         self.code[je].op = Op::Jump { target: end };
@@ -611,13 +676,7 @@ impl<'a> FuncCodegen<'a> {
         Ok(())
     }
 
-    fn compile_for(
-        &mut self,
-        var: &str,
-        iter: &ForIter,
-        body: &Block,
-        span: Span,
-    ) -> Result<()> {
+    fn compile_for(&mut self, var: &str, iter: &ForIter, body: &Block, span: Span) -> Result<()> {
         match iter {
             ForIter::Range { start, end } => {
                 let (sr, _) = self.compile_expr(start)?;
@@ -627,7 +686,14 @@ impl<'a> FuncCodegen<'a> {
 
                 let loop_start = self.code.len();
                 // Jump when `!(vr < er)`, which is the loop's exit condition.
-                let jf = self.emit(Op::JmpIfGeI64 { a: vr, b: er, target: usize::MAX }, span);
+                let jf = self.emit(
+                    Op::JmpIfGeI64 {
+                        a: vr,
+                        b: er,
+                        target: usize::MAX,
+                    },
+                    span,
+                );
 
                 self.env.push(HashMap::new());
                 self.bind(var, vr, Ty::I64);
@@ -645,7 +711,14 @@ impl<'a> FuncCodegen<'a> {
                 }
 
                 // Single-instruction increment instead of `const 1; add; mov`.
-                self.emit(Op::AddI64Imm { dst: vr, src: vr, imm: 1 }, span);
+                self.emit(
+                    Op::AddI64Imm {
+                        dst: vr,
+                        src: vr,
+                        imm: 1,
+                    },
+                    span,
+                );
                 self.emit(Op::Jump { target: loop_start }, span);
 
                 let end = self.code.len();
@@ -675,8 +748,22 @@ impl<'a> FuncCodegen<'a> {
 
                 let loop_start = self.code.len();
                 self.emit(Op::ArrLen { dst: len, src: arr }, span);
-                let jf = self.emit(Op::JmpIfGeI64 { a: idx, b: len, target: usize::MAX }, span);
-                self.emit(Op::ArrGet { dst: vr, base: arr, idx }, span);
+                let jf = self.emit(
+                    Op::JmpIfGeI64 {
+                        a: idx,
+                        b: len,
+                        target: usize::MAX,
+                    },
+                    span,
+                );
+                self.emit(
+                    Op::ArrGet {
+                        dst: vr,
+                        base: arr,
+                        idx,
+                    },
+                    span,
+                );
 
                 self.env.push(HashMap::new());
                 self.bind(var, vr, elem_ty);
@@ -691,7 +778,14 @@ impl<'a> FuncCodegen<'a> {
                 for j in ctx.continues {
                     self.patch_jump(j, step);
                 }
-                self.emit(Op::AddI64Imm { dst: idx, src: idx, imm: 1 }, span);
+                self.emit(
+                    Op::AddI64Imm {
+                        dst: idx,
+                        src: idx,
+                        imm: 1,
+                    },
+                    span,
+                );
                 self.emit(Op::Jump { target: loop_start }, span);
 
                 let end = self.code.len();
@@ -744,19 +838,25 @@ impl<'a> FuncCodegen<'a> {
                 let (r, ty) = self.compile_expr(expr)?;
                 match op {
                     UnOp::Neg => match ty {
-                        Ty::F64 => { self.emit(Op::NegF64 { dst: hint, src: r }, *span); }
-                        _ => { self.emit(Op::NegI64 { dst: hint, src: r }, *span); }
+                        Ty::F64 => {
+                            self.emit(Op::NegF64 { dst: hint, src: r }, *span);
+                        }
+                        _ => {
+                            self.emit(Op::NegI64 { dst: hint, src: r }, *span);
+                        }
                     },
-                    UnOp::Not => { self.emit(Op::Not { dst: hint, src: r }, *span); }
+                    UnOp::Not => {
+                        self.emit(Op::Not { dst: hint, src: r }, *span);
+                    }
                 }
                 Ok(hint)
             }
-            Expr::Binary { op, lhs, rhs, span } => {
-                self.compile_binary(*op, lhs, rhs, *span, Some(hint)).map(|(r, _)| r)
-            }
-            Expr::Call { name, args, span } => {
-                self.compile_call(name, args, *span, Some(hint)).map(|(r, _)| r)
-            }
+            Expr::Binary { op, lhs, rhs, span } => self
+                .compile_binary(*op, lhs, rhs, *span, Some(hint))
+                .map(|(r, _)| r),
+            Expr::Call { name, args, span } => self
+                .compile_call(name, args, *span, Some(hint))
+                .map(|(r, _)| r),
             // These nodes produce their result in an inner register; honoured
             // by the caller's explicit Mov instead of a destination rewrite.
             _ => Ok(self.compile_expr(expr)?.0),
@@ -795,24 +895,35 @@ impl<'a> FuncCodegen<'a> {
                 self.emit(Op::ConstStr { dst: r, id }, *s);
                 Ok((r, Ty::Str))
             }
-            Expr::Var(name, span) => self.lookup(name).ok_or_else(|| {
-                Error::type_error(format!("undefined variable `{}`", name), *span)
-            }),
+            Expr::Var(name, span) => self
+                .lookup(name)
+                .ok_or_else(|| Error::type_error(format!("undefined variable `{}`", name), *span)),
             Expr::Unary { op, expr, span } => {
                 let (r, ty) = self.compile_expr(expr)?;
                 let dst = self.fresh();
                 match op {
                     UnOp::Neg => match ty {
-                        Ty::F64 => { self.emit(Op::NegF64 { dst, src: r }, *span); }
-                        _ => { self.emit(Op::NegI64 { dst, src: r }, *span); }
+                        Ty::F64 => {
+                            self.emit(Op::NegF64 { dst, src: r }, *span);
+                        }
+                        _ => {
+                            self.emit(Op::NegI64 { dst, src: r }, *span);
+                        }
                     },
-                    UnOp::Not => { self.emit(Op::Not { dst, src: r }, *span); }
+                    UnOp::Not => {
+                        self.emit(Op::Not { dst, src: r }, *span);
+                    }
                 }
                 Ok((dst, ty))
             }
             Expr::Binary { op, lhs, rhs, span } => self.compile_binary(*op, lhs, rhs, *span, None),
             Expr::Call { name, args, span } => self.compile_call(name, args, *span, None),
-            Expr::IfExpr { cond, then, otherwise, span } => {
+            Expr::IfExpr {
+                cond,
+                then,
+                otherwise,
+                span,
+            } => {
                 // Reuse the statement-form if by synthesizing an ElseBranch::Block.
                 let branch = ElseBranch::Block((**otherwise).clone());
                 Ok(self.compile_if(cond, then, Some(&branch), *span)?)
@@ -841,7 +952,13 @@ impl<'a> FuncCodegen<'a> {
                     tys.push(t);
                 }
                 let dst = self.fresh();
-                self.emit(Op::MakeTuple { dst, elems: Regs::new(&regs) }, *span);
+                self.emit(
+                    Op::MakeTuple {
+                        dst,
+                        elems: Regs::new(&regs),
+                    },
+                    *span,
+                );
                 Ok((dst, Ty::Tuple(tys)))
             }
             Expr::Index { base, index, span } => {
@@ -851,7 +968,14 @@ impl<'a> FuncCodegen<'a> {
                     _ => Ty::Unit,
                 };
                 let dst = self.fresh();
-                self.emit(Op::GetTuple { dst, base: br, index: *index }, *span);
+                self.emit(
+                    Op::GetTuple {
+                        dst,
+                        base: br,
+                        index: *index,
+                    },
+                    *span,
+                );
                 Ok((dst, elem_ty))
             }
             Expr::Array(items, span) => {
@@ -877,7 +1001,14 @@ impl<'a> FuncCodegen<'a> {
                     _ => Ty::Unit,
                 };
                 let dst = self.fresh();
-                self.emit(Op::ArrGet { dst, base: br, idx: ir }, *span);
+                self.emit(
+                    Op::ArrGet {
+                        dst,
+                        base: br,
+                        idx: ir,
+                    },
+                    *span,
+                );
                 Ok((dst, elem_ty))
             }
             Expr::BlockExpr(block, _) => self.compile_block(block),
@@ -901,7 +1032,14 @@ impl<'a> FuncCodegen<'a> {
             if let Some(FoldVal::I64(n)) = fold_const(lhs) {
                 let (rr, rt) = self.compile_expr(rhs)?;
                 let dst = dst_hint.unwrap_or_else(|| self.fresh());
-                self.emit(Op::AddI64Imm { dst, src: rr, imm: n }, span);
+                self.emit(
+                    Op::AddI64Imm {
+                        dst,
+                        src: rr,
+                        imm: n,
+                    },
+                    span,
+                );
                 return Ok((dst, rt));
             }
         }
@@ -913,17 +1051,35 @@ impl<'a> FuncCodegen<'a> {
             self.emit(Op::Mov { dst, src: lr }, span);
             if op == BinOp::And {
                 // if lhs false → skip rhs, dst stays false
-                let skip = self.emit(Op::JumpIfFalse { cond: dst, target: usize::MAX }, span);
+                let skip = self.emit(
+                    Op::JumpIfFalse {
+                        cond: dst,
+                        target: usize::MAX,
+                    },
+                    span,
+                );
                 let (rr, _) = self.compile_expr(rhs)?;
                 self.emit(Op::Mov { dst, src: rr }, span);
                 let end = self.code.len();
-                self.code[skip].op = Op::JumpIfFalse { cond: dst, target: end };
+                self.code[skip].op = Op::JumpIfFalse {
+                    cond: dst,
+                    target: end,
+                };
             } else {
                 // if lhs false → evaluate rhs; if true → skip rhs (dst stays true)
-                let eval_rhs = self.emit(Op::JumpIfFalse { cond: dst, target: usize::MAX }, span);
+                let eval_rhs = self.emit(
+                    Op::JumpIfFalse {
+                        cond: dst,
+                        target: usize::MAX,
+                    },
+                    span,
+                );
                 let skip = self.emit(Op::Jump { target: usize::MAX }, span);
                 let rhs_start = self.code.len();
-                self.code[eval_rhs].op = Op::JumpIfFalse { cond: dst, target: rhs_start };
+                self.code[eval_rhs].op = Op::JumpIfFalse {
+                    cond: dst,
+                    target: rhs_start,
+                };
                 let (rr, _) = self.compile_expr(rhs)?;
                 self.emit(Op::Mov { dst, src: rr }, span);
                 let end = self.code.len();
@@ -963,7 +1119,11 @@ impl<'a> FuncCodegen<'a> {
         // any new opcode or bytecode format change.
         if matches!(op, BinOp::Add | BinOp::Sub) && !matches!(lt, Ty::F64) {
             if let Some(FoldVal::I64(n)) = fold_const(rhs) {
-                let imm = if op == BinOp::Add { Some(n) } else { n.checked_neg() };
+                let imm = if op == BinOp::Add {
+                    Some(n)
+                } else {
+                    n.checked_neg()
+                };
                 if let Some(imm) = imm {
                     let dst = dst_hint.unwrap_or_else(|| self.fresh());
                     self.emit(Op::AddI64Imm { dst, src: lr, imm }, span);
@@ -1072,7 +1232,12 @@ impl<'a> FuncCodegen<'a> {
             };
             let ty = intern_ty(self.types, elem);
             self.emit(
-                Op::ContainsTyped { hay: arg_regs[0], needle: arg_regs[1], dst, ty },
+                Op::ContainsTyped {
+                    hay: arg_regs[0],
+                    needle: arg_regs[1],
+                    dst,
+                    ty,
+                },
                 span,
             );
             return Ok((dst, Ty::Bool));
@@ -1090,24 +1255,48 @@ impl<'a> FuncCodegen<'a> {
             } else {
                 bid
             };
-            self.emit(Op::CallBuiltin { func, args: regs, dst }, span);
+            self.emit(
+                Op::CallBuiltin {
+                    func,
+                    args: regs,
+                    dst,
+                },
+                span,
+            );
             return Ok((dst, builtin_ret(func)));
         }
         if let Some(&hid) = self.host_ids.get(name) {
             let sig = self.sigs.get(name).ok_or_else(|| {
                 Error::type_error(format!("missing host signature for `{}`", name), span)
             })?;
-            self.emit(Op::CallHost { func: hid, args: regs, dst }, span);
+            self.emit(
+                Op::CallHost {
+                    func: hid,
+                    args: regs,
+                    dst,
+                },
+                span,
+            );
             return Ok((dst, sig.ret.clone()));
         }
         if let Some(&sid) = self.ids.get(name) {
             let sig = self.sigs.get(name).ok_or_else(|| {
                 Error::type_error(format!("missing signature for `{}`", name), span)
             })?;
-            self.emit(Op::CallScript { func: sid, args: regs, dst }, span);
+            self.emit(
+                Op::CallScript {
+                    func: sid,
+                    args: regs,
+                    dst,
+                },
+                span,
+            );
             return Ok((dst, sig.ret.clone()));
         }
-        Err(Error::type_error(format!("undefined function `{}`", name), span))
+        Err(Error::type_error(
+            format!("undefined function `{}`", name),
+            span,
+        ))
     }
 }
 

@@ -49,7 +49,9 @@ fn quick_start() {
              func main() {\n    log(\"开始计算\")\n    double(21)\n}",
         )
         .unwrap();
-    let result = engine.call(&script, "double", vec![Value::I64(21)]).unwrap();
+    let result = engine
+        .call(&script, "double", vec![Value::I64(21)])
+        .unwrap();
     assert_eq!(result, Value::I64(42));
 
     engine.call(&script, "main", vec![]).unwrap();
@@ -67,7 +69,9 @@ fn functions_and_returns() {
     // 末位表达式 = 返回值
     let script = engine.load_str("func add(a, b) { a + b }").unwrap();
     assert_eq!(
-        engine.call(&script, "add", vec![Value::I64(2), Value::I64(3)]).unwrap(),
+        engine
+            .call(&script, "add", vec![Value::I64(2), Value::I64(3)])
+            .unwrap(),
         Value::I64(5)
     );
 
@@ -76,20 +80,28 @@ fn functions_and_returns() {
         .load_str("func div_safe(a, b) -> f64 {\n    if b == 0.0 {\n        return 0.0\n    }\n    a / b\n}")
         .unwrap();
     assert_eq!(
-        engine.call(&script, "div_safe", vec![Value::I64(17), Value::I64(5)]).unwrap(),
+        engine
+            .call(&script, "div_safe", vec![Value::I64(17), Value::I64(5)])
+            .unwrap(),
         Value::F64(3.4)
     );
     assert_eq!(
-        engine.call(&script, "div_safe", vec![Value::I64(10), Value::I64(0)]).unwrap(),
+        engine
+            .call(&script, "div_safe", vec![Value::I64(10), Value::I64(0)])
+            .unwrap(),
         Value::F64(0.0)
     );
 
     // 无返回值的函数返回 ()
     let logs: Logs = Rc::new(RefCell::new(Vec::new()));
     let engine = engine_with_log(&logs);
-    let script = engine.load_str("func shout(msg: str) {\n    log(msg)\n    log(msg + \"!\")\n}").unwrap();
+    let script = engine
+        .load_str("func shout(msg: str) {\n    log(msg)\n    log(msg + \"!\")\n}")
+        .unwrap();
     assert_eq!(
-        engine.call(&script, "shout", vec![Value::from("你好")]).unwrap(),
+        engine
+            .call(&script, "shout", vec![Value::from("你好")])
+            .unwrap(),
         Value::Unit
     );
     assert_eq!(logs.borrow().as_slice(), ["你好", "你好!"]);
@@ -103,7 +115,10 @@ fn functions_and_returns() {
 fn variables() {
     let engine = Engine::new();
     assert_eq!(
-        run_main(&engine, "func main() {\n    let x = 10\n    x = x + 5\n    let y = x * 2\n    y\n}"),
+        run_main(
+            &engine,
+            "func main() {\n    let x = 10\n    x = x + 5\n    let y = x * 2\n    y\n}"
+        ),
         Value::I64(30)
     );
 
@@ -112,7 +127,11 @@ fn variables() {
         .load_str("func main(x) {\n    x = 1\n    x = \"s\"\n    x\n}")
         .unwrap_err();
     assert!(err.message.contains("assignment to `x`"), "{}", err.message);
-    assert!(err.message.contains("expected i64, found str"), "{}", err.message);
+    assert!(
+        err.message.contains("expected i64, found str"),
+        "{}",
+        err.message
+    );
 }
 
 // ===========================================================================
@@ -127,15 +146,35 @@ fn control_flow_if() {
             "func classify(n) {\n    if n < 0 {\n        \"负数\"\n    } else if n == 0 {\n        \"零\"\n    } else {\n        \"正数\"\n    }\n}",
         )
         .unwrap();
-    assert_eq!(engine.call(&script, "classify", vec![Value::I64(-5)]).unwrap(), Value::from("负数"));
-    assert_eq!(engine.call(&script, "classify", vec![Value::I64(0)]).unwrap(), Value::from("零"));
-    assert_eq!(engine.call(&script, "classify", vec![Value::I64(7)]).unwrap(), Value::from("正数"));
+    assert_eq!(
+        engine
+            .call(&script, "classify", vec![Value::I64(-5)])
+            .unwrap(),
+        Value::from("负数")
+    );
+    assert_eq!(
+        engine
+            .call(&script, "classify", vec![Value::I64(0)])
+            .unwrap(),
+        Value::from("零")
+    );
+    assert_eq!(
+        engine
+            .call(&script, "classify", vec![Value::I64(7)])
+            .unwrap(),
+        Value::from("正数")
+    );
 
     // if 表达式直接赋值（else 必须有）
     let script = engine
         .load_str("func max_of(a, b) {\n    let bigger = if a > b { a } else { b }\n    bigger\n}")
         .unwrap();
-    assert_eq!(engine.call(&script, "max_of", vec![Value::I64(3), Value::I64(9)]).unwrap(), Value::I64(9));
+    assert_eq!(
+        engine
+            .call(&script, "max_of", vec![Value::I64(3), Value::I64(9)])
+            .unwrap(),
+        Value::I64(9)
+    );
 }
 
 #[test]
@@ -148,7 +187,12 @@ fn control_flow_loops() {
             "func count_odd_under(n) {\n    let c = 0\n    for i in 0..n {\n        if i % 2 == 0 {\n            continue\n        }\n        c = c + 1\n    }\n    c\n}",
         )
         .unwrap();
-    assert_eq!(engine.call(&script, "count_odd_under", vec![Value::I64(10)]).unwrap(), Value::I64(5));
+    assert_eq!(
+        engine
+            .call(&script, "count_odd_under", vec![Value::I64(10)])
+            .unwrap(),
+        Value::I64(5)
+    );
 
     // while + break
     let script = engine
@@ -156,13 +200,21 @@ fn control_flow_loops() {
             "func first_square_over(n) {\n    let i = 0\n    while true {\n        if i * i > n {\n            break\n        }\n        i = i + 1\n    }\n    i\n}",
         )
         .unwrap();
-    assert_eq!(engine.call(&script, "first_square_over", vec![Value::I64(30)]).unwrap(), Value::I64(6));
+    assert_eq!(
+        engine
+            .call(&script, "first_square_over", vec![Value::I64(30)])
+            .unwrap(),
+        Value::I64(6)
+    );
 
     // 递归
     let script = engine
         .load_str("func fib(n) { if n < 2 { n } else { fib(n-1) + fib(n-2) } }")
         .unwrap();
-    assert_eq!(engine.call(&script, "fib", vec![Value::I64(12)]).unwrap(), Value::I64(144));
+    assert_eq!(
+        engine.call(&script, "fib", vec![Value::I64(12)]).unwrap(),
+        Value::I64(144)
+    );
 }
 
 // ===========================================================================
@@ -180,7 +232,10 @@ fn types_and_conversions() {
     assert_eq!(engine.call(&script, "b", vec![]).unwrap(), Value::F64(3.0));
 
     let script = engine.load_str("func c() { to_str(42) }").unwrap();
-    assert_eq!(engine.call(&script, "c", vec![]).unwrap(), Value::from("42"));
+    assert_eq!(
+        engine.call(&script, "c", vec![]).unwrap(),
+        Value::from("42")
+    );
 
     // 脚本内不做隐式数值转换
     let err = engine.load_str("func d() { 1 + 2.5 }").unwrap_err();
@@ -203,10 +258,15 @@ fn tuples_and_unit() {
         )
         .unwrap();
     assert_eq!(
-        engine.call(&script, "divmod", vec![Value::I64(17), Value::I64(5)]).unwrap(),
+        engine
+            .call(&script, "divmod", vec![Value::I64(17), Value::I64(5)])
+            .unwrap(),
         Value::Tuple(vec![Value::I64(3), Value::I64(2)])
     );
-    assert_eq!(engine.call(&script, "use_divmod", vec![]).unwrap(), Value::I64(32));
+    assert_eq!(
+        engine.call(&script, "use_divmod", vec![]).unwrap(),
+        Value::I64(32)
+    );
 
     // () 是 unit
     let script = engine.load_str("func noop() { }").unwrap();
@@ -229,7 +289,13 @@ fn strings() {
         .load_str("func report(name: str, score: f64) {\n    \"玩家 \" + name + \" 得分 \" + to_str(score)\n}")
         .unwrap();
     assert_eq!(
-        engine.call(&script, "report", vec![Value::from("小明"), Value::F64(3.5)]).unwrap(),
+        engine
+            .call(
+                &script,
+                "report",
+                vec![Value::from("小明"), Value::F64(3.5)]
+            )
+            .unwrap(),
         Value::from("玩家 小明 得分 3.5")
     );
 
@@ -240,12 +306,34 @@ fn strings() {
     let script = engine
         .load_str("func check_password(pw: str) {\n    if len(pw) < 8 {\n        \"太短\"\n    } else if contains(pw, \"123\") {\n        \"太弱\"\n    } else {\n        \"通过\"\n    }\n}")
         .unwrap();
-    assert_eq!(engine.call(&script, "check_password", vec![Value::from("abc")]).unwrap(), Value::from("太短"));
-    assert_eq!(engine.call(&script, "check_password", vec![Value::from("abcdefgh123")]).unwrap(), Value::from("太弱"));
-    assert_eq!(engine.call(&script, "check_password", vec![Value::from("abcdefgh")]).unwrap(), Value::from("通过"));
+    assert_eq!(
+        engine
+            .call(&script, "check_password", vec![Value::from("abc")])
+            .unwrap(),
+        Value::from("太短")
+    );
+    assert_eq!(
+        engine
+            .call(&script, "check_password", vec![Value::from("abcdefgh123")])
+            .unwrap(),
+        Value::from("太弱")
+    );
+    assert_eq!(
+        engine
+            .call(&script, "check_password", vec![Value::from("abcdefgh")])
+            .unwrap(),
+        Value::from("通过")
+    );
 
-    let script = engine.load_str("func i(s: str) { substr(s, 0, 2) }").unwrap();
-    assert_eq!(engine.call(&script, "i", vec![Value::from("中文abc")]).unwrap(), Value::from("中文"));
+    let script = engine
+        .load_str("func i(s: str) { substr(s, 0, 2) }")
+        .unwrap();
+    assert_eq!(
+        engine
+            .call(&script, "i", vec![Value::from("中文abc")])
+            .unwrap(),
+        Value::from("中文")
+    );
 }
 
 // ===========================================================================
@@ -263,7 +351,9 @@ fn builtins_are_numeric_generic() {
     // 无证据 → f64 家族；宿主传 i64 自动提升
     let script = engine.load_str("func pick(a, b) { min(a, b) }").unwrap();
     assert_eq!(
-        engine.call(&script, "pick", vec![Value::I64(2), Value::I64(9)]).unwrap(),
+        engine
+            .call(&script, "pick", vec![Value::I64(2), Value::I64(9)])
+            .unwrap(),
         Value::F64(2.0)
     );
 
@@ -274,7 +364,10 @@ fn builtins_are_numeric_generic() {
 
     // sqrt 仅 f64
     let script = engine.load_str("func s(x: f64) { sqrt(x) }").unwrap();
-    assert_eq!(engine.call(&script, "s", vec![Value::F64(9.0)]).unwrap(), Value::F64(3.0));
+    assert_eq!(
+        engine.call(&script, "s", vec![Value::F64(9.0)]).unwrap(),
+        Value::F64(3.0)
+    );
 }
 
 // ===========================================================================
@@ -297,9 +390,13 @@ fn register_fn_forms() {
     })
     .unwrap();
 
-    let script = engine.load_str("func go(a, b) { add(a, b) + add_short(a, b) }").unwrap();
+    let script = engine
+        .load_str("func go(a, b) { add(a, b) + add_short(a, b) }")
+        .unwrap();
     assert_eq!(
-        engine.call(&script, "go", vec![Value::I64(1), Value::I64(2)]).unwrap(),
+        engine
+            .call(&script, "go", vec![Value::I64(1), Value::I64(2)])
+            .unwrap(),
         Value::I64(6)
     );
 
@@ -311,7 +408,11 @@ fn register_fn_forms() {
     let err = engine
         .call(&script, "try_it", vec![Value::I64(-5)])
         .unwrap_err();
-    assert!(err.message.contains("host function: 负数不接受"), "{}", err.message);
+    assert!(
+        err.message.contains("host function: 负数不接受"),
+        "{}",
+        err.message
+    );
     assert_eq!(
         engine.call(&script, "try_it", vec![Value::I64(5)]).unwrap(),
         Value::I64(5)
@@ -364,28 +465,49 @@ fn type_boundary_defaults_and_annotations() {
     let engine = Engine::new();
 
     // 有字符串线索 → 自动推断为 str
-    let ok = engine.load_str("func greet(name) { \"hi \" + name }").unwrap();
+    let ok = engine
+        .load_str("func greet(name) { \"hi \" + name }")
+        .unwrap();
     assert_eq!(
-        engine.call(&ok, "greet", vec![Value::from("小明")]).unwrap(),
+        engine
+            .call(&ok, "greet", vec![Value::from("小明")])
+            .unwrap(),
         Value::from("hi 小明")
     );
 
     // 无线索 → 默认 i64 → 传字符串被边界校验拒绝（而非静默算错）
     let bad = engine.load_str("func echo(x) { x }").unwrap();
-    let err = engine.call(&bad, "echo", vec![Value::from("文本")]).unwrap_err();
-    assert!(err.message.contains("argument type mismatch"), "{}", err.message);
-    assert!(err.message.contains("Annotate the parameter"), "{}", err.message);
+    let err = engine
+        .call(&bad, "echo", vec![Value::from("文本")])
+        .unwrap_err();
+    assert!(
+        err.message.contains("argument type mismatch"),
+        "{}",
+        err.message
+    );
+    assert!(
+        err.message.contains("Annotate the parameter"),
+        "{}",
+        err.message
+    );
 
     // 标注之后就好了
     let good = engine.load_str("func echo(x: str) { x }").unwrap();
-    assert_eq!(engine.call(&good, "echo", vec![Value::from("文本")]).unwrap(), Value::from("文本"));
+    assert_eq!(
+        engine
+            .call(&good, "echo", vec![Value::from("文本")])
+            .unwrap(),
+        Value::from("文本")
+    );
 
     // f64 参数收 i64 自动提升
     let script = engine
         .load_str("func avg(a: f64, b: f64) { (a + b) / 2.0 }")
         .unwrap();
     assert_eq!(
-        engine.call(&script, "avg", vec![Value::I64(3), Value::I64(4)]).unwrap(),
+        engine
+            .call(&script, "avg", vec![Value::I64(3), Value::I64(4)])
+            .unwrap(),
         Value::F64(3.5)
     );
 }
@@ -436,8 +558,13 @@ fn opaque_handles() {
     .unwrap();
 
     let script = engine.load_str("func buff(p, n) { heal(p, n) }").unwrap();
-    let p = Value::from(Opaque::new(Player { name: "战士".into(), hp: 100 }));
-    let result = engine.call(&script, "buff", vec![p, Value::I64(30)]).unwrap();
+    let p = Value::from(Opaque::new(Player {
+        name: "战士".into(),
+        hp: 100,
+    }));
+    let result = engine
+        .call(&script, "buff", vec![p, Value::I64(30)])
+        .unwrap();
     assert_eq!(result, Value::from("战士 回了 30 血，现 HP 130"));
 }
 
@@ -448,22 +575,32 @@ fn opaque_handles() {
 #[test]
 fn host_tuple_returns() {
     let mut engine = Engine::new();
-    register_fn!(engine, "hsl_to_rgb", (i64) -> (i64, i64, i64), |h| (h * 2, h * 3, h * 4)).unwrap();
+    register_fn!(engine, "hsl_to_rgb", (i64) -> (i64, i64, i64), |h| (h * 2, h * 3, h * 4))
+        .unwrap();
     register_fn!(engine, "take3", ((i64, i64, i64)) -> i64, |t| t.0 + t.1 + t.2).unwrap();
 
     let script = engine
         .load_str("func use_color() {\n    let c = hsl_to_rgb(10)\n    c.0 + c.1 + c.2\n}")
         .unwrap();
-    assert_eq!(engine.call(&script, "use_color", vec![]).unwrap(), Value::I64(90));
+    assert_eq!(
+        engine.call(&script, "use_color", vec![]).unwrap(),
+        Value::I64(90)
+    );
 
     // 元组字面量作实参跨边界（((i64,i64,i64)) 是一个元组类型的参数）
-    let script = engine.load_str("func pass_through(t) { take3(t) }").unwrap();
+    let script = engine
+        .load_str("func pass_through(t) { take3(t) }")
+        .unwrap();
     assert_eq!(
         engine
             .call(
                 &script,
                 "pass_through",
-                vec![Value::Tuple(vec![Value::I64(1), Value::I64(2), Value::I64(3)])]
+                vec![Value::Tuple(vec![
+                    Value::I64(1),
+                    Value::I64(2),
+                    Value::I64(3)
+                ])]
             )
             .unwrap(),
         Value::I64(6)
@@ -489,13 +626,20 @@ fn tuple_inference_and_host_boundary() {
             "func tap_ok() {\n    let hit = find_btn(\"确定\")\n    if hit.0 {\n        hit.1 + hit.2\n    } else {\n        0\n    }\n}",
         )
         .unwrap();
-    assert_eq!(engine.call(&script, "tap_ok", vec![]).unwrap(), Value::I64(300));
+    assert_eq!(
+        engine.call(&script, "tap_ok", vec![]).unwrap(),
+        Value::I64(300)
+    );
 
     // 宿主返回的元组形状编译期已知 → 越界索引是编译错误
     let err = engine
         .load_str("func bad() {\n    let hit = find_btn(\"确定\")\n    hit.4\n}")
         .unwrap_err();
-    assert!(err.message.contains("tuple index 4 out of range"), "{}", err.message);
+    assert!(
+        err.message.contains("tuple index 4 out of range"),
+        "{}",
+        err.message
+    );
 
     // —— §6 脚本参数元组：形状由使用方式反推「至少 N 元」——
     let script = engine
@@ -567,7 +711,9 @@ fn hot_reload() {
     let engine = Engine::new();
     let mut script = engine.load_file(&path).unwrap();
     assert_eq!(
-        engine.call(&script, "greet", vec![Value::from("world")]).unwrap(),
+        engine
+            .call(&script, "greet", vec![Value::from("world")])
+            .unwrap(),
         Value::from("hello world")
     );
 
@@ -575,7 +721,9 @@ fn hot_reload() {
     std::fs::write(&path, "func greet(name: str) { \"你好 \" + name }").unwrap();
     engine.reload(&mut script, &path).unwrap();
     assert_eq!(
-        engine.call(&script, "greet", vec![Value::from("世界")]).unwrap(),
+        engine
+            .call(&script, "greet", vec![Value::from("世界")])
+            .unwrap(),
         Value::from("你好 世界")
     );
 
@@ -583,7 +731,9 @@ fn hot_reload() {
     std::fs::write(&path, "func greet( {").unwrap();
     assert!(engine.reload(&mut script, &path).is_err());
     assert_eq!(
-        engine.call(&script, "greet", vec![Value::from("世界")]).unwrap(),
+        engine
+            .call(&script, "greet", vec![Value::from("世界")])
+            .unwrap(),
         Value::from("你好 世界")
     );
 
@@ -598,7 +748,9 @@ fn hot_reload() {
 fn safety_limits() {
     // gas：死循环被掐
     let engine = Engine::new().with_limits(1_000, 64);
-    let script = engine.load_str("func loop_forever() { while true { 1 } }").unwrap();
+    let script = engine
+        .load_str("func loop_forever() { while true { 1 } }")
+        .unwrap();
     let err = engine.call(&script, "loop_forever", vec![]).unwrap_err();
     assert!(err.message.contains("gas"), "{}", err.message);
 
@@ -634,7 +786,9 @@ fn bytecode_cache() {
     let bytes = engine.script_to_bytes(&script);
     let restored = engine.script_from_bytes(&bytes).unwrap();
     assert_eq!(
-        engine.call(&restored, "add", vec![Value::I64(2), Value::I64(3)]).unwrap(),
+        engine
+            .call(&restored, "add", vec![Value::I64(2), Value::I64(3)])
+            .unwrap(),
         Value::I64(5)
     );
 
@@ -647,7 +801,9 @@ fn bytecode_cache() {
     assert!(cache.exists(), "cache written best-effort");
     let s2 = engine.compile_cached(src, "demo", &cache).unwrap();
     assert_eq!(
-        engine.call(&s2, "add", vec![Value::I64(2), Value::I64(3)]).unwrap(),
+        engine
+            .call(&s2, "add", vec![Value::I64(2), Value::I64(3)])
+            .unwrap(),
         Value::I64(5)
     );
     let _ = s1;
@@ -670,16 +826,26 @@ fn shared_library_via_host_concat() {
     // 顺序无关：编译分两遍（先收全部签名，再查函数体），lib 在前在后都行
     let combined = format!("{}\n{}", lib, user);
     let script = engine.load_str(&combined).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
 
     let reversed = format!("{}\n{}", user, lib);
     let script = engine.load_str(&reversed).unwrap();
-    assert_eq!(engine.call(&script, "main", vec![]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&script, "main", vec![]).unwrap(),
+        Value::I64(42)
+    );
 
     // 同名冲突：明确报错，不静默覆盖（措辞区分宿主碰撞与脚本内部重复）
     let dup = format!("{}\n{}", lib, "func double(n) { n }");
     let err = engine.load_str(&dup).unwrap_err();
-    assert!(err.message.contains("duplicate definition"), "{}", err.message);
+    assert!(
+        err.message.contains("duplicate definition"),
+        "{}",
+        err.message
+    );
 
     let mut engine2 = Engine::new();
     engine2
@@ -694,7 +860,7 @@ fn shared_library_multi_and_conventions() {
     let engine = Engine::new();
 
     // 文件名/位置任意——引擎只收字符串。两个库 + 业务脚本：
-    let str_lib = "func str_shout(s: str) { s + \"!\" }";       // 名字随便起
+    let str_lib = "func str_shout(s: str) { s + \"!\" }"; // 名字随便起
     let num_lib = "func num_double(n) { n * 2 }";
     let user = "func main() {\n    let a = str_shout(\"hi\")\n    let b = num_double(21)\n    a + to_str(b)\n}";
     let combined = format!("{}\n{}\n{}", str_lib, num_lib, user);
@@ -707,7 +873,11 @@ fn shared_library_multi_and_conventions() {
     // 同一份库拼两次 → duplicate definition 报错（兜住"循环包含"）
     let twice = format!("{}\n{}\n{}\n{}", str_lib, user, str_lib, "");
     let err = engine.load_str(&twice).unwrap_err();
-    assert!(err.message.contains("duplicate definition"), "{}", err.message);
+    assert!(
+        err.message.contains("duplicate definition"),
+        "{}",
+        err.message
+    );
 
     // 报错行号是拼接后文本的行号：两行 lib 在前，业务在第 3 行
     let bad_user = "func main() { 1 / 0 }";
@@ -756,19 +926,33 @@ fn tuples_deep_dive() {
     assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(1));
 
     // 嵌套元组连点取值
-    let script = engine.load_str("func f() { let p = ((1, 2), (3, 4))\n p.1.0 }").unwrap();
+    let script = engine
+        .load_str("func f() { let p = ((1, 2), (3, 4))\n p.1.0 }")
+        .unwrap();
     assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(3));
 
     // 索引必须是字面量（取第几个在编译期确定）
     let err = engine.load_str("func f(t, i) { t.i }").unwrap_err();
-    assert!(err.message.contains("expected tuple index"), "{}", err.message);
+    assert!(
+        err.message.contains("expected tuple index"),
+        "{}",
+        err.message
+    );
 
     // 已知长度的越界是编译错误
-    let err = engine.load_str("func f() { let t = (1, 2)\n t.5 }").unwrap_err();
-    assert!(err.message.contains("tuple index 5 out of range"), "{}", err.message);
+    let err = engine
+        .load_str("func f() { let t = (1, 2)\n t.5 }")
+        .unwrap_err();
+    assert!(
+        err.message.contains("tuple index 5 out of range"),
+        "{}",
+        err.message
+    );
 
     // 元组相等被禁止（内部是堆索引，比相等会静默错值）
-    let err = engine.load_str("func f() { (1, 2) == (1, 2) }").unwrap_err();
+    let err = engine
+        .load_str("func f() { (1, 2) == (1, 2) }")
+        .unwrap_err();
     assert!(err.message.contains("equality"), "{}", err.message);
 
     // 标志位模式：用 (ok, value) 表达"可能失败"
@@ -778,10 +962,15 @@ fn tuples_deep_dive() {
              func use2() {\n    let ok = safe_div(10.0, 2.0)\n    if ok.0 {\n        ok.1\n    } else {\n        0.0\n    }\n}",
         )
         .unwrap();
-    assert_eq!(engine.call(&script, "use2", vec![]).unwrap(), Value::F64(5.0));
+    assert_eq!(
+        engine.call(&script, "use2", vec![]).unwrap(),
+        Value::F64(5.0)
+    );
 
     // "至少 N 元"推断：宿主传更长的元组，多出的元素无害
-    let script = engine.load_str("func first2(t) { t.0 * 10 + t.1 }").unwrap();
+    let script = engine
+        .load_str("func first2(t) { t.0 * 10 + t.1 }")
+        .unwrap();
     assert_eq!(
         engine
             .call(
@@ -808,25 +997,47 @@ fn integer_boundaries() {
 
     // 42 只是教程表格里的例子——i64 装得下的都合法
     let script = engine.load_str("func f() { 9223372036854775807 }").unwrap();
-    assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(i64::MAX));
+    assert_eq!(
+        engine.call(&script, "f", vec![]).unwrap(),
+        Value::I64(i64::MAX)
+    );
 
     let script = engine.load_str("func f() { 1234567890123 }").unwrap();
-    assert_eq!(engine.call(&script, "f", vec![]).unwrap(), Value::I64(1234567890123));
+    assert_eq!(
+        engine.call(&script, "f", vec![]).unwrap(),
+        Value::I64(1234567890123)
+    );
 
     // 字面量超范围 → 编译报错
-    let err = engine.load_str("func f() { 9223372036854775808 }").unwrap_err();
-    assert!(err.message.contains("integer literal overflows i64"), "{}", err.message);
+    let err = engine
+        .load_str("func f() { 9223372036854775808 }")
+        .unwrap_err();
+    assert!(
+        err.message.contains("integer literal overflows i64"),
+        "{}",
+        err.message
+    );
 
     // 最小值写不成字面量：先解析数字（溢出）再取负
-    let err = engine.load_str("func f() { -9223372036854775808 }").unwrap_err();
-    assert!(err.message.contains("integer literal overflows i64"), "{}", err.message);
+    let err = engine
+        .load_str("func f() { -9223372036854775808 }")
+        .unwrap_err();
+    assert!(
+        err.message.contains("integer literal overflows i64"),
+        "{}",
+        err.message
+    );
 
     // 运算溢出 → 运行时报错，不回绕
     let script = engine.load_str("func f(x) { x + 1 }").unwrap();
-    let err = engine.call(&script, "f", vec![Value::I64(i64::MAX)]).unwrap_err();
+    let err = engine
+        .call(&script, "f", vec![Value::I64(i64::MAX)])
+        .unwrap_err();
     assert!(err.message.contains("i64 add overflow"), "{}", err.message);
 
-    let script = engine.load_str("func f() { 9223372036854775807 * 2 }").unwrap();
+    let script = engine
+        .load_str("func f() { 9223372036854775807 * 2 }")
+        .unwrap();
     let err = engine.call(&script, "f", vec![]).unwrap_err();
     assert!(err.message.contains("i64 mul overflow"), "{}", err.message);
 }
@@ -900,7 +1111,9 @@ fn faq_common_pitfalls() {
     // Q9 一次调用最多 8 个实参：函数可以定义 9 个参数，但调用时
     // typecheck 先放行（9 == 9），codegen 的操作数上限再拦
     let err = engine
-        .load_str("func f(a, b, c, d, e, g, h, i, j) { a }\nfunc go() { f(1, 2, 3, 4, 5, 6, 7, 8, 9) }")
+        .load_str(
+            "func f(a, b, c, d, e, g, h, i, j) { a }\nfunc go() { f(1, 2, 3, 4, 5, 6, 7, 8, 9) }",
+        )
         .unwrap_err();
     assert!(err.message.contains("the maximum is 8"), "{}", err.message);
 
@@ -908,7 +1121,11 @@ fn faq_common_pitfalls() {
     let err = engine
         .load_str("func main() {\n    func inner() { 1 }\n    inner()\n}")
         .unwrap_err();
-    assert!(err.message.contains("unexpected token Func"), "{}", err.message);
+    assert!(
+        err.message.contains("unexpected token Func"),
+        "{}",
+        err.message
+    );
 
     // 元组字面量同样上限 8
     let err = engine
@@ -917,7 +1134,9 @@ fn faq_common_pitfalls() {
     assert!(err.message.contains("the maximum is 8"), "{}", err.message);
 
     // Q5 if 表达式必须有 else
-    let err = engine.load_str("func f(c) { let x = if c { 1 }\n x }").unwrap_err();
+    let err = engine
+        .load_str("func f(c) { let x = if c { 1 }\n x }")
+        .unwrap_err();
     assert!(err.to_string().contains("Else"), "{}", err);
 
     // Q11 "抛异常"的两种对应物：
@@ -937,7 +1156,10 @@ fn faq_common_pitfalls() {
             "func go(x) {\n    let p = probe(x)\n    if p.0 {\n        \"ok\"\n    } else {\n        \"失败: \" + p.1\n    }\n}",
         )
         .unwrap();
-    assert_eq!(engine.call(&script, "go", vec![Value::I64(3)]).unwrap(), Value::from("ok"));
+    assert_eq!(
+        engine.call(&script, "go", vec![Value::I64(3)]).unwrap(),
+        Value::from("ok")
+    );
     assert_eq!(
         engine.call(&script, "go", vec![Value::I64(-2)]).unwrap(),
         Value::from("失败: -2 为负")

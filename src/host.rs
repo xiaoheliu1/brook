@@ -62,7 +62,10 @@ pub struct Opaque<T: 'static> {
 impl<T: 'static> Opaque<T> {
     /// Wrap a host value for passing into a script call (`Value::from(o)`).
     pub fn new(value: T) -> Self {
-        Self { handle: Handle::new(value), _marker: PhantomData }
+        Self {
+            handle: Handle::new(value),
+            _marker: PhantomData,
+        }
     }
 
     /// Borrow the underlying host value. The downcast is verified by
@@ -77,7 +80,10 @@ impl<T: 'static> Opaque<T> {
 
 impl<T: 'static> Clone for Opaque<T> {
     fn clone(&self) -> Self {
-        Self { handle: self.handle.clone(), _marker: PhantomData }
+        Self {
+            handle: self.handle.clone(),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -119,7 +125,10 @@ impl<T: 'static> FromValue for Opaque<T> {
                 expected, h.type_name
             )));
         }
-        Ok(Self { handle: h.clone(), _marker: PhantomData })
+        Ok(Self {
+            handle: h.clone(),
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -135,9 +144,9 @@ impl<T: 'static> HostResult for Opaque<T> {
 /// Pull the next argument from a host call, advancing the cursor.
 /// Arity is checked once by the wrapper before any conversion happens.
 pub(crate) fn take_arg<T: FromValue>(args: &[Value], idx: &mut usize) -> Result<T> {
-    let v = args.get(*idx).ok_or_else(|| {
-        Error::runtime(format!("host function argument {} is missing", idx))
-    })?;
+    let v = args
+        .get(*idx)
+        .ok_or_else(|| Error::runtime(format!("host function argument {} is missing", idx)))?;
     *idx += 1;
     T::from_value(v)
 }
@@ -145,14 +154,22 @@ pub(crate) fn take_arg<T: FromValue>(args: &[Value], idx: &mut usize) -> Result<
 macro_rules! scalar {
     ($t:ty, $ty:expr, $from:expr, $into:expr) => {
         impl ScriptType for $t {
-            fn script_ty() -> Ty { $ty }
+            fn script_ty() -> Ty {
+                $ty
+            }
         }
         impl FromValue for $t {
-            fn from_value(v: &Value) -> Result<Self> { $from(v) }
+            fn from_value(v: &Value) -> Result<Self> {
+                $from(v)
+            }
         }
         impl HostResult for $t {
-            fn script_ty() -> Ty { $ty }
-            fn into_value(self) -> Result<Value> { Ok($into(self)) }
+            fn script_ty() -> Ty {
+                $ty
+            }
+            fn into_value(self) -> Result<Value> {
+                Ok($into(self))
+            }
         }
     };
 }
@@ -160,11 +177,23 @@ macro_rules! scalar {
 scalar!(i64, Ty::I64, |v: &Value| v.as_i64(), Value::I64);
 scalar!(f64, Ty::F64, |v: &Value| v.as_f64(), Value::F64);
 scalar!(bool, Ty::Bool, |v: &Value| v.as_bool(), Value::Bool);
-scalar!(String, Ty::Str, |v: &Value| Ok(v.as_str()?.to_string()), |s: String| Value::from(s));
-scalar!(Rc<str>, Ty::Str, |v: &Value| Ok(Rc::from(v.as_str()?)), Value::Str);
+scalar!(
+    String,
+    Ty::Str,
+    |v: &Value| Ok(v.as_str()?.to_string()),
+    |s: String| Value::from(s)
+);
+scalar!(
+    Rc<str>,
+    Ty::Str,
+    |v: &Value| Ok(Rc::from(v.as_str()?)),
+    Value::Str
+);
 
 impl ScriptType for () {
-    fn script_ty() -> Ty { Ty::Unit }
+    fn script_ty() -> Ty {
+        Ty::Unit
+    }
 }
 impl FromValue for () {
     fn from_value(v: &Value) -> Result<Self> {
@@ -175,18 +204,30 @@ impl FromValue for () {
     }
 }
 impl HostResult for () {
-    fn script_ty() -> Ty { Ty::Unit }
-    fn into_value(self) -> Result<Value> { Ok(Value::Unit) }
+    fn script_ty() -> Ty {
+        Ty::Unit
+    }
+    fn into_value(self) -> Result<Value> {
+        Ok(Value::Unit)
+    }
 }
 
-impl<'a> HostResult for &'a str {
-    fn script_ty() -> Ty { Ty::Str }
-    fn into_value(self) -> Result<Value> { Ok(Value::from(self)) }
+impl HostResult for &str {
+    fn script_ty() -> Ty {
+        Ty::Str
+    }
+    fn into_value(self) -> Result<Value> {
+        Ok(Value::from(self))
+    }
 }
 
 impl<T: HostResult> HostResult for std::result::Result<T, Error> {
-    fn script_ty() -> Ty { T::script_ty() }
-    fn into_value(self) -> Result<Value> { self?.into_value() }
+    fn script_ty() -> Ty {
+        T::script_ty()
+    }
+    fn into_value(self) -> Result<Value> {
+        self?.into_value()
+    }
 }
 
 // Fixed-arity tuples are the script's multi-value type. Arity 2 was the

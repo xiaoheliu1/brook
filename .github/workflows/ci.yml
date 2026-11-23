@@ -1,9 +1,8 @@
 name: CI
 
 # brook 引擎本体：不依赖任何兄弟仓库，独立 checkout 即可跑。
-# 覆盖：全量测试（含零依赖 fuzz 冒烟）、release 构建、双 ABI 交叉编译。
-# 注：-D warnings 不作为 gate——历史 clippy 警告较多（见 PROJECT_PLAN），
-#      先保证「测试 + 编译」这条主线常绿，lint 清理单独推进。
+# 覆盖：格式、clippy -D warnings、全量测试（含零依赖 fuzz 冒烟）、
+#      release 构建、双 ABI 交叉编译、libFuzzer 冒烟。
 on:
   push:
   pull_request:
@@ -23,7 +22,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo clippy -D warnings
+        run: cargo clippy --all-targets -- -D warnings
       - name: cargo test (含 fuzz 冒烟 / 双引擎 parity / 迁移回归)
         run: cargo test --all-targets
       - name: release 构建零警告检查

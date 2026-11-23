@@ -52,9 +52,7 @@ fn negative_literal_and_loop_condition() -> brook::Result<()> {
 #[test]
 fn fib_recursion_still_correct() -> brook::Result<()> {
     let e = Engine::new();
-    let s = e.load_str(
-        "func fib(n) { if n < 2 { return n } fib(n-1) + fib(n-2) }",
-    )?;
+    let s = e.load_str("func fib(n) { if n < 2 { return n } fib(n-1) + fib(n-2) }")?;
     assert_eq!(e.call(&s, "fib", vec![Value::I64(10)])?, Value::I64(55));
     Ok(())
 }

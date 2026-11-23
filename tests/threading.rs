@@ -69,7 +69,11 @@ fn concurrent_paths_can_compile_the_same_source() {
             thread::spawn(move || {
                 let engine = Engine::new();
                 let script = engine.load_str(src).unwrap();
-                engine.call(&script, "fib", vec![Value::I64(15)]).unwrap().as_i64().unwrap()
+                engine
+                    .call(&script, "fib", vec![Value::I64(15)])
+                    .unwrap()
+                    .as_i64()
+                    .unwrap()
             })
         })
         .collect();
@@ -86,11 +90,17 @@ fn reload_replaces_the_implementation_for_the_next_call() {
 
     let engine = Engine::new();
     let mut script = engine.load_file(&path).unwrap();
-    assert_eq!(engine.call(&script, "go", vec![Value::I64(1)]).unwrap(), Value::I64(2));
+    assert_eq!(
+        engine.call(&script, "go", vec![Value::I64(1)]).unwrap(),
+        Value::I64(2)
+    );
 
     std::fs::write(&path, "func go(x) { x + 100 }").unwrap();
     engine.reload(&mut script, &path).unwrap();
-    assert_eq!(engine.call(&script, "go", vec![Value::I64(1)]).unwrap(), Value::I64(101));
+    assert_eq!(
+        engine.call(&script, "go", vec![Value::I64(1)]).unwrap(),
+        Value::I64(101)
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -111,8 +121,14 @@ fn a_clone_keeps_the_bytecode_it_was_taken_from() {
     std::fs::write(&path, "func go(x) { x * 1000 }").unwrap();
     engine.reload(&mut script, &path).unwrap();
 
-    assert_eq!(engine.call(&script, "go", vec![Value::I64(3)]).unwrap(), Value::I64(3000));
-    assert_eq!(engine.call(&old, "go", vec![Value::I64(3)]).unwrap(), Value::I64(4));
+    assert_eq!(
+        engine.call(&script, "go", vec![Value::I64(3)]).unwrap(),
+        Value::I64(3000)
+    );
+    assert_eq!(
+        engine.call(&old, "go", vec![Value::I64(3)]).unwrap(),
+        Value::I64(4)
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -127,11 +143,16 @@ fn a_failed_reload_leaves_the_old_script_usable() {
     let mut script = engine.load_file(&path).unwrap();
 
     std::fs::write(&path, "func go(x) { x + ").unwrap();
-    let err = engine.reload(&mut script, &path).expect_err("broken source must fail");
+    let err = engine
+        .reload(&mut script, &path)
+        .expect_err("broken source must fail");
     assert!(err.to_string().contains("parse"), "got: {}", err);
 
     // The old bytecode and its signature survived the failed reload.
-    assert_eq!(engine.call(&script, "go", vec![Value::I64(41)]).unwrap(), Value::I64(42));
+    assert_eq!(
+        engine.call(&script, "go", vec![Value::I64(41)]).unwrap(),
+        Value::I64(42)
+    );
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -149,9 +170,15 @@ fn reload_refreshes_the_source_used_for_diagnostics() {
     std::fs::write(&path, "func go(x) {\n  let y = x\n  y / x\n}").unwrap();
     engine.reload(&mut script, &path).unwrap();
 
-    let err = engine.call(&script, "go", vec![Value::I64(0)]).expect_err("div by zero");
+    let err = engine
+        .call(&script, "go", vec![Value::I64(0)])
+        .expect_err("div by zero");
     let rendered = script.report(&err);
-    assert!(rendered.contains(":3:"), "report should point at the new line 3:\n{}", rendered);
+    assert!(
+        rendered.contains(":3:"),
+        "report should point at the new line 3:\n{}",
+        rendered
+    );
     assert!(
         rendered.contains("y / x"),
         "report should quote the reloaded source, not the old one:\n{}",
@@ -181,7 +208,13 @@ fn host_handles_stay_thread_local() {
     .unwrap();
 
     let script = engine.load_str("func f(x) { bump(x) }").unwrap();
-    assert_eq!(engine.call(&script, "f", vec![Value::I64(2)]).unwrap(), Value::I64(2));
-    assert_eq!(engine.call(&script, "f", vec![Value::I64(3)]).unwrap(), Value::I64(5));
+    assert_eq!(
+        engine.call(&script, "f", vec![Value::I64(2)]).unwrap(),
+        Value::I64(2)
+    );
+    assert_eq!(
+        engine.call(&script, "f", vec![Value::I64(3)]).unwrap(),
+        Value::I64(5)
+    );
     assert_eq!(counter.0.get(), 5);
 }
