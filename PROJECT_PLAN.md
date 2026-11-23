@@ -1039,6 +1039,24 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 ---
 
+### 2026-11-23 · App 内置帮助文档全量同步为 brook 迁移后形态（D-056）
+
+**背景**：App 帮助文档（`app/src/main/assets/help/*.md`，25 个文件）落后于 D-051/D-054/D-055 三次架构变化——通篇 ```rhai 代码块标记、API 返回形态写的是 Map（D-051 已改元组）、错误处理写的是"空 Map + try 捕获"（brook 没有 Map 和 try）、Rhai 独有的 `.map()/.filter()/.sort()/.keys()/trim()/parse_int()/闭包/反引号插值` 内建方法全列在帮助里但 brook 根本没有。
+
+**改动（提交 `ea4b222`，android_so_demo 仓库）**：
+- 3 文件重命名：`rhai.md` → `brook.md`（语法小抄）、`rhai-tutorial.md` → `brook-tutorial.md`（入门）、`fn-rhai-builtin.md` → `fn-builtin.md`（内建函数速查）
+- 通篇 ```rhai → ```brook；文字 "Rhai" → "Brook 脚本引擎/语言"；`.rhai` → `.bk`
+- 8 文件 API 签名修正（fn-vision/fn-ui-app/fn-basic/fn-system/fn-task-fs/fn-flows/fn-draw/fn-ocr）：所有 Map 返回改成元组 + 字段序 + 示例代码 + 判空口径
+- app_info/device_info/trigger_json 改 JSON 字符串返回，示例代码改用 json_get 消费
+- fn-vision.md（443 行，API 过时最严重）：头部判空口径段、新手示例、完整函数签名表、所有 "返回：Map/出错形态/示例代码" 逐段修正为 D-051 元组形态
+- 故意保留：brook-tutorial.md 里的 "Brook vs Rhai 差异对照表" + fn-builtin.md 里的 "Brook 没有的 Rhai 语言内建替代写法对照表"——帮助从 rhai 迁移的用户查替代方案
+
+**验证**：全量 grep 确认 0 处残留的 Map/空 Map/try 捕获/直接报错/抛 Rhai 等过时模式，仅 7 处 rhai 引用为故意保留的迁移对照表。
+
+**净效果**：24 文件 +766/−1530 行，删掉 rhai 独有的 800+ 行内容，新增 brook 语法小抄/入门/内建速查。帮助文档现在与 native register_fn! 实际签名逐字节一致。
+
+---
+
 ### 2026-11-23 · 迁移闭环：App 原生支持 .bk（D-036 收尾）
 
 **背景**：真机验证时 `.bk` 靠 push 改名 `.rhai` 绕过 TaskStore 扫描，App 自身不认 `.bk`——最后一块没闭环。
