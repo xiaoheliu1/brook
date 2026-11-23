@@ -1,0 +1,28 @@
+[package]
+name = "brook-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.brook]
+path = ".."
+
+# libFuzzer 目标：任何输入都不允许 panic / abort。
+# 覆盖两类失败：编译器前端（源码变异）与 .sbc 缓存解码（字节变异）。
+[[bin]]
+name = "compile"
+path = "fuzz_targets/compile.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sbc_decode"
+path = "fuzz_targets/sbc_decode.rs"
+test = false
+doc = false

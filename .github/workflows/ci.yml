@@ -1,0 +1,82 @@
+name: CI
+
+# brook 引擎本体：不依赖任何兄弟仓库，独立 checkout 即可跑。
+# 覆盖：全量测试（含零依赖 fuzz 冒烟）、release 构建、双 ABI 交叉编译。
+# 注：-D warnings 不作为 gate——历史 clippy 警告较多（见 PROJECT_PLAN），
+#      先保证「测试 + 编译」这条主线常绿，lint 清理单独推进。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: 全量测试 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (含 fuzz 冒烟 / 双引擎 parity / 迁移回归)
+        run: cargo test --all-targets
+      - name: release 构建零警告检查
+        run: cargo build --release --lib
+
+  android-cross:
+    name: Android 双 ABI 交叉编译
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+      - name: 安装 cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r25c
+          add-to-path: false
+      - name: 构建 arm64-v8a + armeabi-v7a libbrook.so
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a -P 24 -o /tmp/jniLibs build --release --lib
+      - name: 校验 ELF 架构与导出符号
+        run: |
+          for abi in arm64-v8a armeabi-v7a; do
+            f="/tmp/jniLibs/$abi/libbrook.so"
+            test -f "$f" || { echo "缺少 $f"; exit 1; }
+            echo "== $abi =="
+            file "$f"
+            readelf -h "$f" | grep -E 'Class:|Machine:'
+            nm -D "$f" | grep -E 'ms_script_create|ms_script_call|ms_abi_version' | head -5
+          done
+
+  fuzz:
+    name: libFuzzer 冒烟 (60s × 2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: 安装 cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: 前端 fuzz（60 秒）
+        run: cd fuzz && cargo fuzz run compile -- -max_total_time=60
+      - name: .sbc 解码 fuzz（60 秒）
+        run: cd fuzz && cargo fuzz run sbc_decode -- -max_total_time=60
+      - name: 上传崩溃样本（仅失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
