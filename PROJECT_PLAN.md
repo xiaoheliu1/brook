@@ -1049,6 +1049,29 @@ call       := ident "(" (expr ("," expr)*)? ")"
 
 ---
 
+### 2026-11-23 · rhai 引擎从 native .so 彻底剥离（D-054）
+
+**背景**：D-036 迁移闭环后 rhai 引擎代码仅作"回滚余地"并行保留，JNI 三个入口（阶段 1e 起）已全走 brook，rhai 运行期零调用。用户拍板"彻底剥离"，范围Boundary：**仅 native .so**（保留 50 个 `.rhai` 探针/自检脚本、PC 端 rhai_demo 项目、本文件历史决策记录）。
+
+**关键难点——brook 路径复用 rhai 类型当中间表示**：Kotlin 宿主返回 key=value / 制表符文本，brook 是静态类型、无字典类型，迁移期借 rhai 的 `Map`/`Array`/`Dynamic` 解析后再抽字段成元组/JSON。所以不是删依赖即可——这些辅助函数在 brook 调用链上，删 rhai 会编译失败。枢纽还有 `ScriptError = Box<EvalAltResult>`（toolkit 全模块错误类型）。
+
+**做法（本地专用小结构，零新依赖）**：
+- `lib.rs`：`kv_map`/`kv_map_f`/`rows_to_maps`/`report_map`/`parse_xywh`/`wait_ui_poll` 改用本地 `Val`/`KVMap`（`BTreeMap` 保键序，与 rhai::Map 逐字一致）；`map_to_json`/`dyn_to_json`/`xywh_found` 改收本地类型；`parse_xywh` 由"长度不足即未命中"的 rhai Array 改成更精确的 `Option<[i64;4]>`（语义等价）。
+- `toolkit::ScriptError` 从 `Box<EvalAltResult>` 改为本地 `String` 包装（`Display` 只输出正文，`contains(...)` 断言与 ERR\t 报告正文不变）。
+- `toolkit/fs.rs`：`read_bytes`/`list_dir`/`write_bytes` 直接返回原生 `Vec<i64>` / `[(name,rel,dir,size)]`，删掉 rhai→brook 适配层。
+- `toolkit/util.rs`：`date_parts` 12 字段 Map → 本地 `DateParts` struct，brook 拆函直接取字段；删 `rnd_pick`/`arr_join`/`clamp_float` 等 rhai 专用函数。
+- `toolkit/vision.rs`：137 处 rhai 类型使用 → 本地 `VVal`/`VMap`/`VArray`（i64/bool/str + 嵌套），brook 适配层的抽字段逻辑零改动。
+- 删除：`build_engine`（1294 行 228 处 register_fn）、`ENGINE_CACHE`/`AST_CACHE`/`cached_engine`、`run_rhai`/`run_rhai_with_args`、`friendly_eval_err`、各模块 `register_rhai`、`Cargo.toml` rhai 依赖与 lock 项。
+- 顺带清掉 rhai 路径遗留的 8 个死代码函数（`call_iii_bool`/`call_draw_path`/`set_args`/`clear_args` 等）与 3 处 `allow(dead_code)`。
+
+**等价性回归（新增 4 个单测）**：`parse_xywh` 四段全整数判定、`xywh_found` 命中/未命中五元组、KV 解析 + JSON 键序逐字一致、`rows_to_json` 数组对象形态——钉死改写前后字节级行为不变。
+
+**验证**：native 115 单测（基线 114，删 3 个 rhai 专属 + 加 4 个等价性回归）、编译门、宿主覆盖门、clippy -D warnings、fmt --check 全绿；arm64 release .so 交叉编译通过；**`.so` 内 rhai 字符串 0 条、动态符号 0 个**（体积 3.6 MB）；本地 CI 9 项全过（含 JVM 245 单测 + APK 打包）。
+
+**结果**：净删 2244 行（491 增 / 2735 删），native 运行期与二进制中 rhai 归零，brook 为唯一脚本引擎。
+
+---
+
 ## 附录 A · 讨论要点回顾
 
 本方案经多轮讨论逐步收敛，关键问答脉络：
