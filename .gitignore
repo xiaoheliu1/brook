@@ -4,6 +4,8 @@
 
 # Bytecode caches produced by tests and compile_cached
 *.sbc
+# 例外：签入的 fuzz 种子（CI 的 fuzz corpus 与 fuzz_smoke 回归都依赖它，必须进仓库）
+!fuzz/seeds/sbc_decode/valid.sbc
 
 # Tool state (not project code)
 /.workbuddy/
