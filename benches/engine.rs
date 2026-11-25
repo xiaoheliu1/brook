@@ -109,6 +109,43 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("11_brook compile import (loader)", |b| {
         b.iter(|| imp_engine.load_str(black_box(imp_src)).unwrap())
     });
+
+    let short_script = engine.load_str("func f(x) { x + 1 }").unwrap();
+    c.bench_function("12_brook short call", |b| {
+        b.iter(|| {
+            engine
+                .call(&short_script, "f", vec![Value::I64(41)])
+                .unwrap()
+        })
+    });
+    c.bench_function("13_brook validate short program", |b| {
+        b.iter(|| {
+            brook::validate::validate(
+                black_box(&short_script.code),
+                black_box(engine.fingerprint().len()),
+            )
+            .unwrap()
+        })
+    });
+
+    let mut large_src = String::new();
+    for i in 0..512 {
+        large_src.push_str(&format!("func unused_{i}() {{ {i} }}\n"));
+    }
+    large_src.push_str("func target() { 42 }");
+    let large_script = engine.load_str(&large_src).unwrap();
+    c.bench_function("14_brook short call large program", |b| {
+        b.iter(|| engine.call(&large_script, "target", vec![]).unwrap())
+    });
+    c.bench_function("15_brook validate large program", |b| {
+        b.iter(|| {
+            brook::validate::validate(
+                black_box(&large_script.code),
+                black_box(engine.fingerprint().len()),
+            )
+            .unwrap()
+        })
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);

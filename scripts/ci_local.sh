@@ -21,9 +21,11 @@ run() {
 }
 
 run "cargo fmt --check"   cargo fmt --all -- --check
-run "cargo clippy"        cargo clippy --all-targets -- -D warnings
-run "cargo test（全量）"  cargo test --all-targets
-run "release 构建"        cargo build --release --lib
+run "cargo clippy"        cargo clippy --locked --all-targets -- -D warnings
+run "cargo test（全量）"  cargo test --locked --all-targets
+run "doctest"             cargo test --locked --doc
+run "strict rustdoc"      env RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
+run "release 构建"        cargo build --locked --release --lib
 
 if [[ "${SKIP_CROSS:-0}" != "1" ]]; then
   if command -v cargo-ndk >/dev/null 2>&1 && [[ -n "${ANDROID_NDK_HOME:-${ANDROID_HOME:-}}" ]]; then

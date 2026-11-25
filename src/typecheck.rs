@@ -556,6 +556,16 @@ impl Checker {
                 Ok(Ty::Tuple(ts))
             }
             Expr::Index { base, index, span } => {
+                if *index >= crate::ir::MAX_OPERANDS {
+                    return Err(Error::type_error(
+                        format!(
+                            "tuple index {} exceeds the maximum of {}",
+                            index,
+                            crate::ir::MAX_OPERANDS - 1
+                        ),
+                        *span,
+                    ));
+                }
                 let base_ty = self.infer_expr(base)?;
                 let bt = self.resolve(&base_ty);
                 match bt {
@@ -886,7 +896,7 @@ pub fn is_builtin(name: &str) -> bool {
 }
 
 /// Arity of the builtins that accept both `i64` and `f64`. `None` for every
-/// other name. Kept next to [`builtin_signature`] so the two tables cannot
+/// other name. Kept next to `builtin_signature` so the two tables cannot
 /// drift: a name in one must not appear in the other.
 pub fn numeric_builtin_arity(name: &str) -> Option<usize> {
     match name {

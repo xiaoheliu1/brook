@@ -1,0 +1,13 @@
+func main() {
+    let xs = [1, 2, 3]
+    let alias = xs
+    push(alias, 4)
+    let total = 0
+    for x in xs { total = total + x }
+    total + len(xs) + xs[3]
+}
+
+func rows() {
+    let rows = [("a", 1), ("b", 2)]
+    contains(rows, ("b", 2))
+}

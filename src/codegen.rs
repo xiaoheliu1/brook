@@ -429,12 +429,15 @@ impl<'a> FuncCodegen<'a> {
                 }
             }
         }
+        let cond_start = self.code.len();
         let (cr, _) = self.compile_expr(cond)?;
-        if let Some(last) = self.code.last() {
-            if let Some(fused) = fuse_branch(last.op, cr, usize::MAX) {
-                let idx = self.code.len() - 1;
-                self.code[idx].op = fused;
-                return Ok(idx);
+        if self.code.len() > cond_start {
+            if let Some(last) = self.code.last() {
+                if let Some(fused) = fuse_branch(last.op, cr, usize::MAX) {
+                    let idx = self.code.len() - 1;
+                    self.code[idx].op = fused;
+                    return Ok(idx);
+                }
             }
         }
         Ok(self.emit(
@@ -680,9 +683,17 @@ impl<'a> FuncCodegen<'a> {
         match iter {
             ForIter::Range { start, end } => {
                 let (sr, _) = self.compile_expr(start)?;
-                let (er, _) = self.compile_expr(end)?;
+                let (end_reg, _) = self.compile_expr(end)?;
                 let vr = self.fresh();
+                let er = self.fresh();
                 self.emit(Op::Mov { dst: vr, src: sr }, span);
+                self.emit(
+                    Op::Mov {
+                        dst: er,
+                        src: end_reg,
+                    },
+                    span,
+                );
 
                 let loop_start = self.code.len();
                 // Jump when `!(vr < er)`, which is the loop's exit condition.
@@ -1047,7 +1058,9 @@ impl<'a> FuncCodegen<'a> {
         let (lr, lt) = self.compile_expr(lhs)?;
 
         if op == BinOp::And || op == BinOp::Or {
-            let dst = dst_hint.unwrap_or_else(|| self.fresh());
+            // The assignment target may also be read by the RHS. Keep the
+            // short-circuit result elsewhere and let the caller write it last.
+            let dst = self.fresh();
             self.emit(Op::Mov { dst, src: lr }, span);
             if op == BinOp::And {
                 // if lhs false → skip rhs, dst stays false

@@ -1,0 +1,9 @@
+func f(s) {
+    let n = len(s)
+    let part = substr(s, 0, n)
+    to_str(n) + ":" + part
+}
+
+func g(a, b) {
+    if a < b { a + b } else { b + a }
+}

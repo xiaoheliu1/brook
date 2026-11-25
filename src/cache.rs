@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::ir::{builtin, FuncId, Function, Instr, Op, Program, Reg, Regs, MAX_OPERANDS};
 use crate::ty::Ty;
 use crate::typecheck::{FuncSig, SigTable};
-use crate::validate;
+use crate::validate::ValidatedCode;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -40,7 +40,9 @@ pub const MAGIC: &[u8; 4] = b"VTBC";
 /// D-049：`ContainsTyped` 的 f64 标量改为 IEEE 值相等（NaN != NaN、
 /// -0.0 == 0.0），与解释器 `Value::PartialEq` 及 `==` 一致；v7 缓存会
 /// 保留旧的按位比较语义，必须失效重建，VERSION 7→8。
-pub const VERSION: u16 = 8;
+/// 命名布尔条件融合、短路赋值别名和 range 终点快照的 codegen 修复改变了
+/// 可执行语义，v8 缓存必须重建，VERSION 8→9。
+pub const VERSION: u16 = 9;
 
 /// (name, slot id, params, ret), sorted by name. `CallHost` instructions embed
 /// the slot id, so both the set of functions and their order must be stable.
@@ -591,6 +593,13 @@ fn read_instr(
 // ------------------------------ whole program ------------------------------
 
 pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
+    encode_with_program(script, script.code.program(), fp)
+}
+
+/// Serialize cache bytes from a raw program. Decoding remains the validation boundary.
+#[doc(hidden)]
+pub fn encode_with_program(script: &Script, program: &Program, fp: &HostFingerprint) -> Vec<u8> {
+    let code = program;
     let mut w = Writer::new();
     w.slice(MAGIC);
     w.u16(VERSION);
@@ -620,20 +629,20 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
         write_sig(&mut w, sig);
     }
 
-    w.u32(script.code.strings.len() as u32);
-    for s in &script.code.strings {
+    w.u32(code.strings.len() as u32);
+    for s in &code.strings {
         w.str(s);
     }
 
     // v7（D-047）：`ContainsTyped` 引用的静态类型池。类型拥有 String/Vec，
     // 不能直接塞进 Copy 的 Instr，所以走旁路表 + u32 索引。
-    w.u32(script.code.types.len() as u32);
-    for t in &script.code.types {
+    w.u32(code.types.len() as u32);
+    for t in &code.types {
         write_ty(&mut w, t);
     }
 
-    w.u32(script.code.funcs.len() as u32);
-    for f in &script.code.funcs {
+    w.u32(code.funcs.len() as u32);
+    for f in &code.funcs {
         w.str(&f.name);
         w.u16(f.nregs);
         write_sig(
@@ -650,8 +659,8 @@ pub fn encode(script: &Script, fp: &HostFingerprint) -> Vec<u8> {
     }
 
     // 同上：ids 按名字排序，保证逐字节可复现
-    w.u32(script.code.ids.len() as u32);
-    let mut id_pairs: Vec<_> = script.code.ids.iter().collect();
+    w.u32(code.ids.len() as u32);
+    let mut id_pairs: Vec<_> = code.ids.iter().collect();
     id_pairs.sort_by(|a, b| a.0.cmp(b.0));
     for (name, id) in id_pairs {
         w.str(name);
@@ -878,10 +887,10 @@ pub fn decode(bytes: &[u8], fp: &HostFingerprint) -> Result<Script> {
         strings,
         types,
     };
-    validate::validate(&program, nhost)?;
+    let code = ValidatedCode::new(program, nhost)?;
 
     Ok(Script {
-        code: program,
+        code,
         sigs,
         name,
         source_hash,

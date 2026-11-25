@@ -8,7 +8,15 @@
 //! `else if` path that once slipped past the guard). Seeds are fixed so any
 //! failure reproduces exactly.
 
-use brook::Engine;
+use brook::{Engine, Script};
+
+fn exercise_no_arg(engine: &Engine, script: &Script) {
+    for func in script.code.funcs.iter().take(8) {
+        if func.params.is_empty() {
+            let _ = engine.call(script, &func.name, vec![]);
+        }
+    }
+}
 
 /// xorshift64* — deterministic, dependency-free.
 struct Rng(u64);
@@ -49,7 +57,9 @@ fn valid_sbc() -> Vec<u8> {
 #[test]
 fn mutated_cache_bytes_never_panic() {
     let original = valid_sbc();
-    let engine = Engine::new();
+    let engine = Engine::new()
+        .with_limits(10_000, 64)
+        .with_heap_limit(64 * 1024);
     let mut rng = Rng::new(0xDEAD_BEEF_CAFE_0001);
 
     for round in 0..5000u32 {
@@ -85,7 +95,9 @@ fn mutated_cache_bytes_never_panic() {
                 }
             }
         }
-        let _ = engine.script_from_bytes(&bytes);
+        if let Ok(script) = engine.script_from_bytes(&bytes) {
+            exercise_no_arg(&engine, &script);
+        }
         let _ = round;
     }
 }
@@ -173,7 +185,9 @@ fn generated_source_never_panics_the_compiler() {
         "->",
         "\n",
     ];
-    let engine = Engine::new();
+    let engine = Engine::new()
+        .with_limits(10_000, 64)
+        .with_heap_limit(64 * 1024);
     let mut rng = Rng::new(0x1234_5678_9ABC_DEF0);
 
     for _ in 0..3000 {
@@ -185,8 +199,40 @@ fn generated_source_never_panics_the_compiler() {
                 src.push(' ');
             }
         }
-        let _ = engine.load_str(&src);
+        if let Ok(script) = engine.load_str(&src) {
+            exercise_no_arg(&engine, &script);
+        }
     }
+}
+
+#[test]
+fn checked_in_fuzz_seeds_compile_and_execute() -> brook::Result<()> {
+    let engine = Engine::new();
+    for entry in std::fs::read_dir("fuzz/seeds/compile").unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|s| s.to_str()) != Some("bk") {
+            continue;
+        }
+        let src = std::fs::read_to_string(path).unwrap();
+        let script = engine.load_str(&src)?;
+        for func in script.code.funcs.iter() {
+            if func.params.is_empty() {
+                let _ = engine.call(&script, &func.name, vec![]);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn checked_in_sbc_seed_decodes_and_executes() -> brook::Result<()> {
+    let bytes = std::fs::read("fuzz/seeds/sbc_decode/valid.sbc").unwrap();
+    let engine = Engine::new()
+        .with_limits(10_000, 64)
+        .with_heap_limit(64 * 1024);
+    let script = engine.script_from_bytes(&bytes)?;
+    exercise_no_arg(&engine, &script);
+    Ok(())
 }
 
 /// Depth-stress generators, randomized over kind and length. Small rungs

@@ -5,12 +5,50 @@
 //! at program construction keeps the dispatch loop free of defensive checks
 //! without turning a corrupt cache into undefined behaviour.
 //!
-//! This runs in `Engine::compile` and `cache::decode`, never in `Vm::new` —
-//! a `Vm` is created per `Engine::call`, so an O(code) pass there would land on
-//! the execution hot path.
+//! Compiled and decoded programs are wrapped in [`ValidatedCode`] so the
+//! engine can execute them without rescanning on every call. The public `Vm`
+//! constructors still repeat the pass because their low-level API accepts
+//! caller-constructed, mutable `Program`s.
 
 use crate::error::{Error, Result};
 use crate::ir::{builtin, FuncId, Op, Program, Reg, Regs, MAX_OPERANDS};
+use std::ops::Deref;
+use std::rc::Rc;
+
+/// Immutable bytecode that has passed structural validation.
+#[derive(Clone, Debug)]
+pub struct ValidatedCode {
+    program: Rc<Program>,
+    nhosts: usize,
+}
+
+impl ValidatedCode {
+    /// Validate `program` for a registry with `nhosts` slots and prevent further mutation.
+    pub fn new(program: Program, nhosts: usize) -> Result<Self> {
+        validate(&program, nhosts)?;
+        Ok(Self {
+            program: Rc::new(program),
+            nhosts,
+        })
+    }
+
+    /// Read-only access to the validated program.
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
+
+    pub(crate) fn host_count(&self) -> usize {
+        self.nhosts
+    }
+}
+
+impl Deref for ValidatedCode {
+    type Target = Program;
+
+    fn deref(&self) -> &Self::Target {
+        self.program()
+    }
+}
 
 /// Reject a program with out-of-range registers, jump targets, function ids,
 /// string ids or oversized operand lists.
@@ -207,8 +245,15 @@ pub fn validate(program: &Program, nhosts: usize) -> Result<()> {
                     reg(dst, "dst")?;
                 }
                 Op::CallBuiltin { func, args, dst } => {
-                    if builtin::name(func) == "?builtin" {
-                        return Err(bad(format!("ins {i}: unknown builtin id {}", func)));
+                    let arity = builtin::arity(func)
+                        .ok_or_else(|| bad(format!("ins {i}: unknown builtin id {}", func)))?;
+                    if args.len() != arity {
+                        return Err(bad(format!(
+                            "ins {i}: builtin `{}` expects {} args, got {}",
+                            builtin::name(func),
+                            arity,
+                            args.len()
+                        )));
                     }
                     regs_ok(&args, "args")?;
                     reg(dst, "dst")?;

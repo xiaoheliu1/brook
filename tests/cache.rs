@@ -240,7 +240,7 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
         },
         Op::CallBuiltin {
             func: 0,
-            args: three(),
+            args: Regs::new(&[1]),
             dst: 4,
         },
         Op::ContainsTyped {
@@ -274,19 +274,23 @@ fn every_opcode_roundtrips_exactly() -> brook::Result<()> {
         })
         .collect();
     let script = Script {
-        code: Program {
-            funcs: vec![Function {
-                name: "ops".into(),
-                code,
-                nregs: 8,
-                params: vec![],
-                ret: Ty::Unit,
-            }],
-            ids,
-            strings: vec![Rc::from("constant")],
-            // `ContainsTyped` above points at type 0.
-            types: vec![Ty::I64],
-        },
+        code: brook::ValidatedCode::new(
+            Program {
+                funcs: vec![Function {
+                    name: "ops".into(),
+                    code,
+                    nregs: 8,
+                    params: vec![],
+                    ret: Ty::Unit,
+                }],
+                ids,
+                strings: vec![Rc::from("constant")],
+                // `ContainsTyped` above points at type 0.
+                types: vec![Ty::I64],
+            },
+            fp.len(),
+        )
+        .unwrap(),
         sigs: HashMap::new(),
         name: "<opcode-test>".into(),
         source_hash: cache::hash_source("opcodes"),
@@ -421,7 +425,12 @@ fn v7_cache_is_rejected_after_float_equality_change() -> brook::Result<()> {
     let mut bytes = cache::encode(&script, &fp);
     bytes[4..6].copy_from_slice(&7u16.to_le_bytes());
     let err = cache::decode(&bytes, &fp).unwrap_err();
-    assert!(err.message.contains("version 7 != 8"), "{}", err.message);
+    assert!(
+        err.message
+            .contains(&format!("version 7 != {}", cache::VERSION)),
+        "{}",
+        err.message
+    );
     Ok(())
 }
 

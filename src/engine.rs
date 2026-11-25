@@ -5,13 +5,12 @@ use crate::cache::{self, HostFingerprint};
 use crate::codegen::Codegen;
 use crate::error::{Error, Result};
 use crate::host::{take_arg, HostArg, HostResult, ScriptType};
-use crate::ir;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::span::Span;
 use crate::ty::Ty;
 use crate::typecheck::{Checker, FuncSig, SigTable};
-use crate::validate;
+use crate::validate::ValidatedCode;
 use crate::value::{short_type_name, Value};
 use crate::vm::Vm;
 use std::collections::HashMap;
@@ -137,10 +136,11 @@ impl HostRegistry {
     }
 }
 
-/// A compiled script: typed bytecode plus the signature table and source name.
+/// A compiled script: immutable validated bytecode plus signatures and source metadata.
 #[derive(Clone, Debug)]
 pub struct Script {
-    pub code: ir::Program,
+    /// Immutable validated bytecode. Dereferences to `Program` for read-only inspection.
+    pub code: ValidatedCode,
     pub sigs: SigTable,
     /// Source name, e.g. a file path; exposed for diagnostics.
     pub name: String,
@@ -392,7 +392,7 @@ impl Engine {
         let host_sigs = self.host.signatures();
         let sigs = Checker::new(&host_sigs).check(&program)?;
         let code = Codegen::new(&sigs, self.host.ids()).compile(&program)?;
-        validate::validate(&code, self.host.len())?;
+        let code = ValidatedCode::new(code, self.host.len())?;
 
         Ok(Script {
             code,
@@ -427,14 +427,15 @@ impl Engine {
         // 依据旧路径的文件判定"新鲜"而服役旧字节码）。reload_cached 用
         // `*script = ...` 不受影响；这里对齐两条路径。
         script.deps = fresh.deps;
+        script.host_fp = fresh.host_fp;
         Ok(())
     }
 
     /// Serialize a compiled script into the `.sbc` format. Useful for an
     /// in-memory cache or for shipping bytecode without its source: the bytes
-    /// are self-contained and pinned to this engine's host registry.
+    /// are self-contained and pinned to the registry that compiled the script.
     pub fn script_to_bytes(&self, script: &Script) -> Vec<u8> {
-        cache::encode(script, &self.host.fingerprint())
+        cache::encode(script, &script.host_fp)
     }
 
     /// Deserialize `.sbc` bytes (no file I/O). Rejects bad magic, unsupported
@@ -562,6 +563,7 @@ impl Engine {
 
         let func = script
             .code
+            .program()
             .id_of(name)
             .ok_or_else(|| Error::runtime(format!("`{}` is not a script function", name)))?;
 
@@ -570,15 +572,18 @@ impl Engine {
         // engine API — see PROJECT_PLAN.md, "安全边界". Note it requires the
         // default `panic = "unwind"` strategy; with `panic = "abort"` the
         // process aborts instead (documented in Cargo.toml).
-        let mut vm = Vm::with_cancel(
-            &script.code,
-            &self.host,
-            self.max_steps,
-            self.max_depth,
-            self.max_heap,
-            self.cancel_hook.clone(),
-        );
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm.call(func, coerced))) {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut vm = Vm::from_validated(
+                &script.code,
+                &self.host,
+                self.max_steps,
+                self.max_depth,
+                self.max_heap,
+                self.cancel_hook.clone(),
+            )?;
+            vm.call(func, coerced)
+        }));
+        match result {
             Ok(result) => result,
             Err(_) => Err(Error::runtime(
                 "script aborted: internal panic (engine bug or panicking host function)",

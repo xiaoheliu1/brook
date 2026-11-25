@@ -6,6 +6,7 @@ use brook::ir::{builtin, Function, Instr, Op, Program, Regs};
 use brook::span::Span;
 use brook::ty::Ty;
 use brook::validate::validate;
+use brook::vm::Vm;
 use brook::Engine;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -128,6 +129,90 @@ fn ids_and_pools_are_checked() -> brook::Result<()> {
     p.ids.insert("ghost".into(), 9);
     assert!(validate(&p, 0).is_err());
     Ok(())
+}
+
+#[test]
+fn builtin_arities_are_checked() -> brook::Result<()> {
+    for (func, arity) in [
+        (builtin::LEN, 1),
+        (builtin::POW, 2),
+        (builtin::SUBSTR, 3),
+        (builtin::TO_STR_F64, 1),
+        (builtin::TO_STR_I64, 1),
+        (builtin::TO_STR_BOOL, 1),
+        (builtin::TO_STR_STR, 1),
+    ] {
+        let wrong = if arity == 1 {
+            Regs::new(&[])
+        } else {
+            Regs::new(&[0])
+        };
+        assert!(rejected(
+            Op::CallBuiltin {
+                func,
+                args: wrong,
+                dst: 0,
+            },
+            1,
+            0
+        ));
+        let right = Regs::new(&vec![0; arity]);
+        assert!(validate(
+            &program(
+                Op::CallBuiltin {
+                    func,
+                    args: right,
+                    dst: 0,
+                },
+                1
+            ),
+            0
+        )
+        .is_ok());
+    }
+    Ok(())
+}
+
+#[test]
+fn public_vm_rejects_invalid_program_before_execution() {
+    let program = program(Op::ConstI64 { dst: 0, val: 1 }, 0);
+    let host = brook::engine::HostRegistry::new();
+    let err = match Vm::new(&program, &host, 1_000, 64, 4 << 20) {
+        Ok(_) => panic!("invalid program must be rejected"),
+        Err(err) => err,
+    };
+    assert!(
+        err.message.contains("dst register 0 >= nregs 0"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn validated_code_rejects_registry_count_mismatch() {
+    let mut program = program(Op::ConstUnit { dst: 0 }, 1);
+    program.ids.insert("f".into(), 0);
+    let script = brook::Script {
+        sigs: HashMap::from([(
+            "f".to_string(),
+            brook::typecheck::FuncSig {
+                params: vec![],
+                ret: Ty::Unit,
+            },
+        )]),
+        code: brook::ValidatedCode::new(program, 1).unwrap(),
+        name: "mismatch".into(),
+        source_hash: 0,
+        source: Rc::from(""),
+        deps: Vec::new(),
+        host_fp: Vec::new(),
+    };
+    let err = Engine::new().call(&script, "f", vec![]).unwrap_err();
+    assert!(
+        err.message.contains("expects 1 host slots, registry has 0"),
+        "{}",
+        err.message
+    );
 }
 
 #[test]

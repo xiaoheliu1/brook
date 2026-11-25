@@ -39,9 +39,163 @@ fn vm_call(src: &str, name: &str, args: Vec<Value>) -> brook::Result<Value> {
 }
 
 fn both_agree(src: &str, expected: Value) -> brook::Result<()> {
+    both_agree_with_args(src, "f", vec![], expected)
+}
+
+fn both_agree_with_args(
+    src: &str,
+    name: &str,
+    args: Vec<Value>,
+    expected: Value,
+) -> brook::Result<()> {
     let host = HostRegistry::new();
-    assert_eq!(eval_call(src, "f", vec![], &host)?, expected, "eval result");
-    assert_eq!(vm_call(src, "f", vec![])?, expected, "vm result");
+    assert_eq!(
+        eval_call(src, name, args.clone(), &host)?,
+        expected,
+        "eval result"
+    );
+    assert_eq!(vm_call(src, name, args)?, expected, "vm result");
+    Ok(())
+}
+
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+}
+
+fn int_expr(rng: &mut Rng, depth: usize) -> String {
+    if depth == 0 || rng.below(4) == 0 {
+        return match rng.below(3) {
+            0 => "n".into(),
+            1 => (rng.below(11) as i64 - 5).to_string(),
+            _ => "0".into(),
+        };
+    }
+    match rng.below(6) {
+        0 => format!("-({})", int_expr(rng, depth - 1)),
+        1 => format!(
+            "({}) + ({})",
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1)
+        ),
+        2 => format!(
+            "({}) - ({})",
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1)
+        ),
+        3 => format!(
+            "({}) * ({})",
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1)
+        ),
+        4 => format!(
+            "({}) / ({})",
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1)
+        ),
+        _ => format!(
+            "if {} {{ {} }} else {{ {} }}",
+            bool_expr(rng, depth - 1),
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1),
+        ),
+    }
+}
+
+fn bool_expr(rng: &mut Rng, depth: usize) -> String {
+    if depth == 0 || rng.below(4) == 0 {
+        return match rng.below(3) {
+            0 => "b".into(),
+            1 => "true".into(),
+            _ => "false".into(),
+        };
+    }
+    match rng.below(6) {
+        0 => format!("!({})", bool_expr(rng, depth - 1)),
+        1 => format!(
+            "({}) && ({})",
+            bool_expr(rng, depth - 1),
+            bool_expr(rng, depth - 1)
+        ),
+        2 => format!(
+            "({}) || ({})",
+            bool_expr(rng, depth - 1),
+            bool_expr(rng, depth - 1)
+        ),
+        3 => format!(
+            "({}) == ({})",
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1)
+        ),
+        4 => format!(
+            "({}) < ({})",
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1)
+        ),
+        _ => format!(
+            "({}) != ({})",
+            int_expr(rng, depth - 1),
+            int_expr(rng, depth - 1)
+        ),
+    }
+}
+
+fn assert_same_outcome(
+    src: &str,
+    args: &[Value],
+    eval: brook::Result<Value>,
+    vm: brook::Result<Value>,
+    cached: brook::Result<Value>,
+) {
+    match (eval, vm, cached) {
+        (Ok(eval), Ok(vm), Ok(cached)) => {
+            assert_eq!(eval, vm, "eval/VM divergence for {src}");
+            assert_eq!(eval, cached, "cache divergence for {src}");
+        }
+        (Err(_), Err(_), Err(_)) => {}
+        (eval, vm, cached) => panic!(
+            "outcome divergence for {src} with {args:?}: eval={eval:?}, vm={vm:?}, cached={cached:?}"
+        ),
+    }
+}
+
+#[test]
+fn generated_expressions_match_eval_and_cache_roundtrip() -> brook::Result<()> {
+    let mut rng = Rng(0x5EED_1234_9876_ABCD);
+    let host = HostRegistry::new();
+    let engine = Engine::new();
+    for case in 0..300 {
+        let expr = if case % 2 == 0 {
+            int_expr(&mut rng, 4)
+        } else {
+            bool_expr(&mut rng, 4)
+        };
+        let src = format!("func f(n: i64, b: bool) {{ {expr} }}");
+        let script = engine.load_str(&src)?;
+        let cached = engine.script_from_bytes(&engine.script_to_bytes(&script))?;
+        for (n, b) in [(0, false), (1, true), (-2, false), (7, true)] {
+            let args = vec![Value::I64(n), Value::Bool(b)];
+            assert_same_outcome(
+                &src,
+                &args,
+                eval_call(&src, "f", args.clone(), &host),
+                engine.call(&script, "f", args.clone()),
+                engine.call(&cached, "f", args.clone()),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -77,6 +231,38 @@ fn handle_identity_matches_the_vm() -> brook::Result<()> {
     assert_eq!(eval_call(src, "f", args.clone(), &host)?, Value::Bool(true));
     assert_eq!(vm_call(src, "f", args)?, Value::Bool(true));
     Ok(())
+}
+
+#[test]
+fn named_boolean_condition_keeps_its_initializer() -> brook::Result<()> {
+    both_agree(
+        "func f() { let c = 1 < 2\n if c { 0 } else { 1 }\n c }",
+        Value::Bool(true),
+    )
+}
+
+#[test]
+fn short_circuit_assignment_reads_the_old_target() -> brook::Result<()> {
+    both_agree_with_args(
+        "func f(a: bool, b: bool) { let x = a\n x = b && x\n x }",
+        "f",
+        vec![Value::Bool(false), Value::Bool(true)],
+        Value::Bool(false),
+    )?;
+    both_agree_with_args(
+        "func f(a: bool, b: bool) { let x = a\n x = b || x\n x }",
+        "f",
+        vec![Value::Bool(true), Value::Bool(false)],
+        Value::Bool(true),
+    )
+}
+
+#[test]
+fn range_end_is_snapshotted_before_iteration() -> brook::Result<()> {
+    both_agree(
+        "func f() { let end = 3\n let sum = 0\n for i in 0..end { sum = sum + i\n end = 1 }\n sum }",
+        Value::I64(3),
+    )
 }
 
 #[test]

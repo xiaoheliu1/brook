@@ -37,23 +37,18 @@ fn hostile_sbc_rejects_params_over_register_window() {
         strings: vec![],
         types: Vec::new(),
     };
-    let script = Script {
-        sigs: HashMap::from([(
-            "f".to_string(),
-            brook::typecheck::FuncSig {
-                params: vec![Ty::I64; 200],
-                ret: Ty::I64,
-            },
-        )]),
-        code,
-        name: "hostile".into(),
-        source_hash: 0,
-        source: Rc::from(""),
-        deps: Vec::new(),
-        host_fp: Vec::new(),
-    };
+    let mut script = Engine::new().load_str("func f() { () }").unwrap();
+    script.sigs = HashMap::from([(
+        "f".to_string(),
+        brook::typecheck::FuncSig {
+            params: vec![Ty::I64; 200],
+            ret: Ty::I64,
+        },
+    )]);
+    script.name = "hostile".into();
+    script.source_hash = 0;
     let fp: cache::HostFingerprint = Vec::new();
-    let bytes = cache::encode(&script, &fp);
+    let bytes = cache::encode_with_program(&script, &code, &fp);
     let engine = Engine::new();
     let err = engine.script_from_bytes(&bytes).unwrap_err();
     assert!(
@@ -83,7 +78,7 @@ func f() { 42 }
     let engine = Engine::new();
     let script = engine.load_str(src).unwrap();
     let host = HostRegistry::new();
-    let mut vm = brook::vm::Vm::new(&script.code, &host, 1_000_000, 64, 4 << 20);
+    let mut vm = brook::vm::Vm::new(&script.code, &host, 1_000_000, 64, 4 << 20).unwrap();
     let big = script.code.id_of("big").unwrap();
     let f = script.code.id_of("f").unwrap();
     assert_eq!(vm.call(big, vec![]).unwrap(), Value::I64(16));
@@ -94,6 +89,82 @@ func f() { 42 }
     let err = vm.call(f, vec![Value::I64(1)]).unwrap_err();
     assert!(err.message.contains("expects"), "{}", err.message);
     assert_eq!(vm.call(f, vec![]).unwrap(), Value::I64(42));
+}
+
+#[test]
+fn hostile_sbc_rejects_wrong_builtin_arity() {
+    let bytes = encode_program(
+        "f",
+        vec![],
+        Ty::Unit,
+        vec![
+            Instr::new(
+                Op::CallBuiltin {
+                    func: brook::ir::builtin::TO_STR_I64,
+                    args: brook::ir::Regs::new(&[]),
+                    dst: 0,
+                },
+                brook::Span::synthetic(),
+            ),
+            Instr::new(Op::Ret { src: 0 }, brook::Span::synthetic()),
+        ],
+        1,
+        Ty::Unit,
+    );
+    let err = Engine::new().script_from_bytes(&bytes).unwrap_err();
+    assert!(
+        err.message.contains("expects 1 args, got 0"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn validated_code_rejects_invalid_program_at_construction() {
+    let engine = Engine::new();
+    let script = engine.load_str("func f() { 1 }").unwrap();
+    let mut program = script.code.program().clone();
+    program.funcs[0].code[0].op = Op::ConstI64 { dst: 1, val: 1 };
+    let err = brook::ValidatedCode::new(program, 0).unwrap_err();
+    assert!(
+        err.message.contains("dst register 1 >= nregs 1"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn huge_tuple_index_is_rejected_before_allocation() {
+    let engine = Engine::new();
+    for src in [
+        "func f(t) { t.9223372036854775807 }",
+        "func f(t) { let x = t.0\n t.9223372036854775807 }",
+        "func f() { (1, 2).9223372036854775807 }",
+    ] {
+        let err = engine.load_str(src).unwrap_err();
+        assert!(
+            err.message.contains("exceeds the maximum of 7"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    {
+        let err = engine.load_str("func f(t) { t.4294967296 }").unwrap_err();
+        assert!(
+            err.message.contains("too large for this platform"),
+            "{}",
+            err.message
+        );
+    }
+
+    let script = engine.load_str("func f(t) { t.7 }").unwrap();
+    let value = Value::Tuple((0..8).map(Value::I64).collect());
+    assert_eq!(
+        engine.call(&script, "f", vec![value]).unwrap(),
+        Value::I64(7)
+    );
 }
 
 /// 3. 类型文法的深度守卫：`let x: ((((...i64...)))) = 1` 的递归
@@ -149,7 +220,7 @@ fn deep_nested_type_in_cache_is_rejected() {
                 ret: ty,
             },
         )]),
-        code,
+        code: brook::ValidatedCode::new(code, 0).unwrap(),
         name: "deep".into(),
         source_hash: 0,
         source: Rc::from(""),
@@ -258,23 +329,18 @@ fn encode_program(
         strings: vec![],
         types: Vec::new(),
     };
-    let script = Script {
-        sigs: HashMap::from([(
-            name.to_string(),
-            brook::typecheck::FuncSig {
-                params: params.clone(),
-                ret: sig_ret,
-            },
-        )]),
-        code: prog,
-        name: name.into(),
-        source_hash: 0,
-        source: Rc::from(""),
-        deps: Vec::new(),
-        host_fp: Vec::new(),
-    };
+    let mut script = Engine::new().load_str("func f() { () }").unwrap();
+    script.sigs = HashMap::from([(
+        name.to_string(),
+        brook::typecheck::FuncSig {
+            params,
+            ret: sig_ret,
+        },
+    )]);
+    script.name = name.into();
+    script.source_hash = 0;
     let fp: cache::HostFingerprint = Vec::new();
-    cache::encode(&script, &fp)
+    cache::encode_with_program(&script, &prog, &fp)
 }
 
 /// 5.7-1：解码签名含推断变量 → 拒绝。`type_matches` 的
@@ -348,7 +414,7 @@ fn hostile_sbc_rejects_id_table_mismatch() {
     };
     let script = Script {
         sigs: HashMap::new(),
-        code: prog,
+        code: brook::ValidatedCode::new(prog, 0).unwrap(),
         name: "ids".into(),
         source_hash: 0,
         source: Rc::from(""),
@@ -409,6 +475,50 @@ fn script_rejects_foreign_engine_registry() {
     let err = e2.call(&script, "f", vec![]).unwrap_err();
     assert!(
         err.message.contains("different host registry"),
+        "{}",
+        err.message
+    );
+
+    let bytes = e2.script_to_bytes(&script);
+    let err = e2.script_from_bytes(&bytes).unwrap_err();
+    assert!(
+        err.message.contains("host registry changed"),
+        "{}",
+        err.message
+    );
+    let round_trip = e1.script_from_bytes(&bytes).unwrap();
+    assert_eq!(e1.call(&round_trip, "f", vec![]).unwrap(), Value::I64(1));
+}
+
+#[test]
+fn reload_rebinds_the_host_fingerprint() {
+    let path = std::env::temp_dir().join(format!("brook_reload_fp_{}.bk", std::process::id()));
+    std::fs::write(&path, "func f() { beta() }").unwrap();
+
+    let mut e1 = Engine::new();
+    register_fn!(e1, "alpha", () -> i64, || 1).unwrap();
+    let mut script = e1.load_str("func f() { alpha() }").unwrap();
+
+    let mut e2 = Engine::new();
+    register_fn!(e2, "beta", () -> i64, || 2).unwrap();
+    e2.reload(&mut script, &path).unwrap();
+    std::fs::remove_file(path).unwrap();
+
+    assert_eq!(e2.call(&script, "f", vec![]).unwrap(), Value::I64(2));
+    assert!(e1.call(&script, "f", vec![]).is_err());
+}
+
+#[test]
+fn previous_cache_version_is_rejected() {
+    let engine = Engine::new();
+    let script = engine.load_str("func f() { 1 }").unwrap();
+    let mut bytes = engine.script_to_bytes(&script);
+    let previous = cache::VERSION - 1;
+    bytes[4..6].copy_from_slice(&previous.to_le_bytes());
+    let err = engine.script_from_bytes(&bytes).unwrap_err();
+    assert!(
+        err.message
+            .contains(&format!("version {previous} != {}", cache::VERSION)),
         "{}",
         err.message
     );
@@ -520,7 +630,7 @@ fn cache_deps_outside_import_dir_invalidate() {
     };
     let hostile = Script {
         sigs: HashMap::new(),
-        code: prog,
+        code: brook::ValidatedCode::new(prog, 0).unwrap(),
         name: "task".into(),
         source_hash: brook::cache::hash_source(src),
         source: Rc::from(src),

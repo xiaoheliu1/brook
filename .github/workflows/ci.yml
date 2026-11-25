@@ -28,11 +28,17 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
       - name: cargo clippy -D warnings
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: cargo test (含 fuzz 冒烟 / 双引擎 parity / 迁移回归)
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets
+      - name: doctest
+        run: cargo test --locked --doc
+      - name: strict rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps
       - name: release 构建零警告检查
-        run: cargo build --release --lib
+        run: cargo build --locked --release --lib
 
   android-cross:
     name: Android 双 ABI 交叉编译
@@ -53,7 +59,7 @@ jobs:
       - name: 构建 arm64-v8a + armeabi-v7a libbrook.so
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: cargo ndk -t arm64-v8a -t armeabi-v7a -P 24 -o /tmp/jniLibs build --release --lib
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a -P 24 -o /tmp/jniLibs build --locked --release --lib
       - name: 校验 ELF 架构与导出符号
         run: |
           for abi in arm64-v8a armeabi-v7a; do
@@ -74,10 +80,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: 安装 cargo-fuzz
         run: cargo install cargo-fuzz --locked
+      - name: 准备 fuzz 种子语料
+        run: |
+          mkdir -p fuzz/corpus/compile fuzz/corpus/sbc_decode
+          cp fuzz/seeds/compile/*.bk fuzz/corpus/compile/
+          cp fuzz/seeds/sbc_decode/*.sbc fuzz/corpus/sbc_decode/
       - name: 前端 fuzz（60 秒）
-        run: cd fuzz && cargo fuzz run compile -- -max_total_time=60
+        run: cd fuzz && cargo fuzz run compile -- -max_total_time=60 -max_len=4096 -dict=compile.dict corpus/compile
       - name: .sbc 解码 fuzz（60 秒）
-        run: cd fuzz && cargo fuzz run sbc_decode -- -max_total_time=60
+        run: cd fuzz && cargo fuzz run sbc_decode -- -max_total_time=60 -max_len=4096 corpus/sbc_decode
       - name: 上传崩溃样本（仅失败时）
         if: failure()
         uses: actions/upload-artifact@v4

@@ -586,6 +586,7 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> Result<Expr> {
+        let entry = self.depth;
         let mut e = self.parse_primary()?;
         loop {
             if self.check(&TokenKind::Dot) {
@@ -594,11 +595,17 @@ impl Parser {
                 self.bump();
                 let idx_span = self.peek_span();
                 let idx = match self.peek().clone() {
-                    TokenKind::Int(n) if n >= 0 => n as usize,
+                    TokenKind::Int(n) if n >= 0 => usize::try_from(n).map_err(|_| {
+                        Error::parse(
+                            format!("tuple index {n} is too large for this platform"),
+                            idx_span,
+                        )
+                    })?,
                     _ => return Err(Error::parse("expected tuple index after '.'", idx_span)),
                 };
                 self.bump();
                 let span = expr_span(&e).to(idx_span);
+                self.enter(idx_span)?;
                 e = Expr::Index {
                     base: Box::new(e),
                     index: idx,
@@ -607,8 +614,10 @@ impl Parser {
             } else if self.check(&TokenKind::LBracket) {
                 // Array indexing `rows[i]` (ADR-018). Chained like `.n`
                 // postfix: `rows[i][j]` indexes the (nested) result again.
+                let open = self.peek_span();
                 self.bump();
                 self.eat_newlines();
+                self.enter(open)?;
                 let idx = self.parse_expr()?;
                 self.eat_newlines();
                 let close = self.expect(TokenKind::RBracket)?.span;
@@ -622,6 +631,7 @@ impl Parser {
                 break;
             }
         }
+        self.depth = entry;
         Ok(e)
     }
 

@@ -1,6 +1,8 @@
 # 极简嵌入式脚本语言 · 项目方案与开发记录
 
-> **文档性质**：活文档（living document）。本文件是本项目的单一真相来源。
+> **文档性质**：活文档（living document）。本文件是 **miniscript/brook 引擎本身**的方案与决策流水账。
+> **不要从这里判断 android_so_demo 的当前函数数、脚本写法、包名或 APP 帮助口径**；那些看
+> `../android_so_demo/docs/当前口径与维护总入口.md`。下文早期记录若与后面的 D-054 / D-057 冲突，以后者为准。
 > **维护规则**：
 > - 架构/方案变更 → 更新对应章节，并在「第九章 变更日志」追加记录。
 > - 重大技术取舍 → 在「第七章 决策记录」新增一条 ADR，不删旧记录。
@@ -1098,6 +1100,22 @@ call       := ident "(" (expr ("," expr)*)? ")"
 **验证**：native 115 单测（基线 114，删 3 个 rhai 专属 + 加 4 个等价性回归）、编译门、宿主覆盖门、clippy -D warnings、fmt --check 全绿；arm64 release .so 交叉编译通过；**`.so` 内 rhai 字符串 0 条、动态符号 0 个**（体积 3.6 MB）；本地 CI 9 项全过（含 JVM 245 单测 + APK 打包）。
 
 **结果**：净删 2244 行（491 增 / 2735 删），native 运行期与二进制中 rhai 归零，brook 为唯一脚本引擎。
+
+---
+
+### 2026-11-23 · App 层彻底剥离：不再识别 .rhai 后缀 + 帮助/高亮全 brook 化（D-057）
+
+**背景**：D-054 只剥了 native `.so` 的 rhai 引擎，App 层仍把 `.rhai` 与 `.bk` 都当脚本（ historically 为向后兼容），且 D-056 改帮助文档时留了 3 个死链、编辑器语法高亮仍是 rhai 关键字（`func` 不上色、`try/catch` 反而高亮）。用户明确要求「完全剥离原来的引擎」。
+
+**决策**：
+1. **后缀单一来源**（`ScriptFiles.kt`）：`EXTENSIONS = [.bk]`、`DEFAULT_EXT = .bk`；新增 `nameCandidates()` / `normalize()` 两个辅助，把散落在 `TaskStore.findByName` / `HttpServerService.pushConflict` / `TriggerMount.missingDeps` 的「缺后缀自动补」逻辑也收进单一来源。全 App 20+ 处识别逻辑/注释/提示改口径。测试里 11 个文件的 `.rhai` 文件名占位符整体换 `.bk`，并新增「旧 .rhai 不识别」的反向断言。
+2. **帮助文档**：`brook-tutorial.md` 的「Brook vs Rhai 差异表」改为「Brook 能力边界」（去 rhai 列），`fn-builtin.md` 的「没有的 Rhai 内建」改为「不支持的写法」；`caps.txt` 注释去 rhai_demo 指向。全 assets 仅保留一句决策说明性的 `.rhai`。
+3. **编辑器高亮**：新增 `assets/monarch/brook.json`（13 关键字严格按 brook lexer：`func/import/let/if/else/while/for/in/return/break/continue/true/false`），`EditorSupport.kt` 三处 `source.rhai`→`source.brook`；删除无引用的旧 `monarch/rhai.json`。
+4. **刻意保留**（数据兼容，非识别）：`WatchService` 读历史 prefs 时仍洗掉旧 `.rhai` 后缀（用户既有运行历史不能丢）；`ScriptFiles` 注释保留一句剥离说明；native 注释保留迁移来龙去脉。
+
+**验证**：JVM **490 单测全绿**（0 失败，含后缀契约反向断言）；Kotlin 编译通过（`BUILD SUCCESSFUL`）。
+
+**范围边界**：仓库内 `scripts/*.rhai`（25 个探针）、`.push/`、`.tmp_push/rev_scripts/`（16 个临时脚本）为 `.gitignore` 的历史资产，用户早前拍板保留且此次未要求删除，未动。App 已不再识别它们，但磁盘文件仍在。
 
 ---
 

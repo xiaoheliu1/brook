@@ -579,6 +579,16 @@ pub mod builtin {
     /// `push(arr, v)` — the one side-effecting builtin (ADR-018).
     pub const PUSH: u8 = 19;
 
+    pub fn arity(id: u8) -> Option<usize> {
+        Some(match id {
+            ABS | SQRT | FLOOR | CEIL | LEN | TO_I64 | TO_F64 | TO_STR_F64 | TO_STR_I64
+            | TO_STR_BOOL | TO_STR_STR | ABS_I64 => 1,
+            POW | MIN | MAX | CONTAINS | MIN_I64 | MAX_I64 | PUSH => 2,
+            SUBSTR => 3,
+            _ => return None,
+        })
+    }
+
     /// Choose the type-specialized string conversion opcode.
     pub fn to_str_id(ty: &crate::ty::Ty) -> u8 {
         match ty {

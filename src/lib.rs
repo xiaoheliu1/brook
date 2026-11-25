@@ -59,4 +59,5 @@ pub use engine::{Engine, Script};
 pub use error::{Error, ErrorKind, Result, TraceFrame};
 pub use host::Opaque;
 pub use span::Span;
+pub use validate::ValidatedCode;
 pub use value::{Handle, Value};

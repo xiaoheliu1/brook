@@ -282,12 +282,16 @@ fn cache_decode_rejects_hostile_dependency_lists() {
 
     let fp: cache::HostFingerprint = Vec::new();
     let base = brook::Script {
-        code: Program {
-            funcs: vec![],
-            ids: HashMap::new(),
-            strings: vec![],
-            types: Vec::new(),
-        },
+        code: brook::ValidatedCode::new(
+            Program {
+                funcs: vec![],
+                ids: HashMap::new(),
+                strings: vec![],
+                types: Vec::new(),
+            },
+            0,
+        )
+        .unwrap(),
         sigs: HashMap::new(),
         name: "hostile".into(),
         source_hash: 1,

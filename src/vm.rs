@@ -20,6 +20,7 @@ use crate::error::{Error, Result, TraceFrame};
 use crate::ir::{self, FuncId, Instr, Op, Program, Reg, Regs};
 use crate::span::Span;
 use crate::ty::Ty;
+use crate::validate::ValidatedCode;
 use crate::value::{Handle, Value};
 use std::rc::Rc;
 
@@ -171,18 +172,60 @@ pub struct Vm<'a> {
 const CANCEL_CHECK_EVERY: u64 = 65_536;
 
 impl<'a> Vm<'a> {
+    /// Validate the caller-supplied program before constructing a VM.
     pub fn new(
         program: &'a Program,
         host: &'a HostRegistry,
         max_steps: u64,
         max_depth: usize,
         max_heap: u64,
-    ) -> Self {
+    ) -> Result<Self> {
         Self::with_cancel(program, host, max_steps, max_depth, max_heap, None)
     }
 
     /// Same as [`Vm::new`] with a host cancellation hook attached.
+    /// Returns an error when the program is not structurally valid.
     pub fn with_cancel(
+        program: &'a Program,
+        host: &'a HostRegistry,
+        max_steps: u64,
+        max_depth: usize,
+        max_heap: u64,
+        cancel: Option<std::rc::Rc<dyn Fn() -> bool>>,
+    ) -> Result<Self> {
+        crate::validate::validate(program, host.len())?;
+        Ok(Self::build(
+            program, host, max_steps, max_depth, max_heap, cancel,
+        ))
+    }
+
+    /// Engine-only fast path: immutability preserves validation, leaving an O(1) host-count check.
+    pub(crate) fn from_validated(
+        code: &'a ValidatedCode,
+        host: &'a HostRegistry,
+        max_steps: u64,
+        max_depth: usize,
+        max_heap: u64,
+        cancel: Option<std::rc::Rc<dyn Fn() -> bool>>,
+    ) -> Result<Self> {
+        if code.host_count() != host.len() {
+            return Err(Error::runtime(format!(
+                "validated program expects {} host slots, registry has {}",
+                code.host_count(),
+                host.len()
+            )));
+        }
+        Ok(Self::build(
+            code.program(),
+            host,
+            max_steps,
+            max_depth,
+            max_heap,
+            cancel,
+        ))
+    }
+
+    fn build(
         program: &'a Program,
         host: &'a HostRegistry,
         max_steps: u64,
@@ -1347,6 +1390,16 @@ impl<'a> Vm<'a> {
     fn invoke_builtin(&mut self, base: usize, func: u8, args: &Regs, span: Span) -> Result<Slot> {
         use ir::builtin::*;
         let n = args.len();
+        let arity = ir::builtin::arity(func).ok_or_else(|| err_at("unknown builtin", span))?;
+        if n != arity {
+            return Err(err_at(
+                format!(
+                    "builtin `{}` expects {arity} args, got {n}",
+                    ir::builtin::name(func)
+                ),
+                span,
+            ));
+        }
         let at = |i: usize| base + args.get(i) as usize;
         match func {
             ABS | SQRT | FLOOR | CEIL => {

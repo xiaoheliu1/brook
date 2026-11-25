@@ -45,6 +45,8 @@ let v = engine.call(&script, "函数名", vec![Value::I64(1)])?;   // 调用
 
 每次 `call` 都是独立的 VM 实例：gas 按次计费、缓存按 Script 复用（编译一次，调用任意次）。
 
+`Script.code` 的类型是不可变的 `brook::ValidatedCode`，它在编译/解码时完成结构校验，并通过 `Deref<Target = ir::Program>` 提供只读检查；因此 `Engine::call` 不再每次扫描整份字节码。需要替换字节码时必须重新构造 `ValidatedCode::new(program, host_count)`；低层 `Vm::new` 仍接受调用方自行构造的可变 `Program`，并会在执行前严格校验。
+
 ## 3. 注册函数：`register_fn!`
 
 ```rust
@@ -177,7 +179,7 @@ let script = engine.compile_cached(src, "task", "cache/task.sbc")?;
 let script = engine.load_cached("scripts/task.bk")?;
 ```
 
-诚实基准：磁盘路径比直接编译**慢**（两次 I/O ≈80µs vs 编译 8µs）。价值在「内存源码跳过编译」与「字节码独立交付」。缓存绑定宿主注册表指纹，注册表变了自动失效。格式 VERSION 当前 3。
+诚实基准：磁盘路径比直接编译**慢**（两次 I/O ≈80µs vs 编译 8µs）。价值在「内存源码跳过编译」与「字节码独立交付」。缓存绑定脚本编译时的宿主注册表指纹，注册表变了自动失效；经其他 Engine 转序列化也不会被重新盖章。格式 VERSION 当前 9。
 
 ## 11. 线程模型
 
@@ -213,7 +215,7 @@ let engine = Engine::new().set_import_resolver(|name| {
 
 **查找优先级（重要）**：配置了 `set_import_dir` 后它**覆盖**「脚本自身目录」——包括依赖脚本自己的相对 import。`libs/net/http.bk` 里写 `import "socket"` 会去 `<import_dir>/socket.bk` 找，而不是 `libs/net/socket.bk`。设计原因：`import_dir` 是显式配置，覆盖隐式约定（脚本所在目录）；子目录库想要兄弟模块，就把 import_dir 设到子目录树顶部（如 `libs`）并用 `import "net/socket"` 子路径。**缓存校验同样按 import_dir 收敛**：依赖路径解析到 import_dir 之外的缓存一律判失效重建（v6 起）。
 
-缓存：`.sbc`（v6）记录依赖清单（路径 + hash）与拼接视图源码，`load_cached` / `compile_cached` 加载时逐一校验——**任一依赖文件改一个字，依赖它的脚本缓存自动失效重建**；`reload` 重新解析 import 同理。另外每个 `Script` 绑定编译时的宿主指纹，拿到注册表不同的 Engine 上调用会明确报错（不会按槽位 id 静默调错函数）。
+缓存：`.sbc`（当前 v9）记录依赖清单（路径 + hash）与拼接视图源码，`load_cached` / `compile_cached` 加载时逐一校验——**任一依赖文件改一个字，依赖它的脚本缓存自动失效重建**；`reload` 重新解析 import 并同步宿主指纹。另外每个 `Script` 绑定编译时的宿主指纹，拿到注册表不同的 Engine 上调用会明确报错（不会按槽位 id 静默调错函数）。
 
 **历史方案（备选）**：宿主拼接——读几份源码拼成一份再编译（下面的 `load_with_libs`）。在语言没有 import 的时代它是唯一解；现在 import 已内置，拼接仅在「宿主想完全控制合并内容」时才有意义：
 
@@ -310,12 +312,39 @@ register_fn!(engine.borrow_mut(), "call_script",
 | `ty/typecheck` | HM 风格推断 + 签名表 |
 | `ir/codegen` | 类型特化字节码（71 opcode） |
 | `vm` | 寄存器 VM（扁平寄存器文件、gas/堆/深度） |
-| `validate` | 字节码结构校验（出生点跑一次） |
+| `validate` | 字节码结构校验 + 不可变 `ValidatedCode`（编译/解码/safe VM 边界） |
 | `cache` | `.sbc` 编解码 + 指纹绑定 |
 | `engine` | 公共 API |
 | `host` | `register_fn!` 桥接层（ScriptType/FromValue/HostResult/Opaque） |
 | `ffi` | C ABI |
 | `eval` | 参考解释器（非安全边界） |
 | `error/diag/span` | 错误与诊断渲染 |
+
+## 15. 性能与模糊测试
+
+调用开销基准（短程序与 513 函数大程序，分离纯校验成本）：
+
+```bash
+cargo bench --locked --bench engine -- '(short|large) (call|program)'
+```
+
+零依赖差分/执行冒烟：
+
+```bash
+cargo test --locked --test eval_parity --test fuzz_smoke
+```
+
+完整 libFuzzer 需要 nightly 与 POSIX 构建环境；仓库自带源码 token 词典、源码种子和合法 `.sbc` 种子：
+
+```bash
+cd fuzz
+mkdir -p corpus/compile corpus/sbc_decode
+cp seeds/compile/*.bk corpus/compile/
+cp seeds/sbc_decode/*.sbc corpus/sbc_decode/
+cargo fuzz run compile -- -max_total_time=60 -max_len=4096 -dict=compile.dict corpus/compile
+cargo fuzz run sbc_decode -- -max_total_time=60 -max_len=4096 corpus/sbc_decode
+```
+
+两个目标都会执行最多 8 个函数，并按签名生成标量/元组/空数组参数；参考解释器差分还会覆盖随机表达式与 `.sbc` 往返。
 
 架构与全部决策记录：`PROJECT_PLAN.md`。

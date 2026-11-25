@@ -95,6 +95,17 @@ fn long_else_if_expression_ladder_is_rejected() {
 }
 
 #[test]
+fn long_postfix_chains_are_rejected() {
+    let tuple = format!("func f(t) {{ t{} }}", ".0".repeat(2_000));
+    let msg = err_of(&tuple);
+    assert!(msg.contains("nesting too deep"), "{}", msg);
+
+    let array = format!("func f(a) {{ a{} }}", "[0]".repeat(2_000));
+    let msg = err_of(&array);
+    assert!(msg.contains("nesting too deep"), "{}", msg);
+}
+
+#[test]
 fn everyday_nesting_still_compiles() {
     let engine = Engine::new();
 

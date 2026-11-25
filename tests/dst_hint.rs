@@ -57,6 +57,23 @@ fn hinted_slot_may_also_be_an_operand() -> brook::Result<()> {
 }
 
 #[test]
+fn short_circuit_assignment_does_not_clobber_an_operand() -> brook::Result<()> {
+    let engine = Engine::new();
+    let and = engine.load_str("func f(a: bool, b: bool) { let x = a\n x = b && x\n x }")?;
+    assert_eq!(
+        engine.call(&and, "f", vec![Value::Bool(false), Value::Bool(true)])?,
+        Value::Bool(false)
+    );
+
+    let or = engine.load_str("func g(a: bool, b: bool) { let x = a\n x = b || x\n x }")?;
+    assert_eq!(
+        engine.call(&or, "g", vec![Value::Bool(true), Value::Bool(false)])?,
+        Value::Bool(true)
+    );
+    Ok(())
+}
+
+#[test]
 fn fallback_nodes_keep_their_explicit_mov() -> brook::Result<()> {
     let engine = Engine::new();
     // `if` has its own result register; the hint must not leak into branches.

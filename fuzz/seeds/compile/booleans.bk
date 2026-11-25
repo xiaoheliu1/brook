@@ -1,0 +1,16 @@
+func f(a, b) {
+    let x = a
+    x = b || x
+    let y = !b && (x == a)
+    if y { true } else { false }
+}
+
+func range_end() {
+    let end = 4
+    let total = 0
+    for i in 0..end {
+        total = total + i
+        end = 1
+    }
+    total
+}
