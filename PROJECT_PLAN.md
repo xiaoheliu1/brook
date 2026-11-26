@@ -292,11 +292,12 @@ call       := ident "(" (expr ("," expr)*)? ")"
 - [x] Android arm64 交叉编译通过
 - [x] benchmark 采集（fib18 / sum_to200 / compile，数据见第十章）
 - [x] 热路径优化第二轮（扁平寄存器文件、局部 ip/code、融合比较分支、立即数加法、紧凑指令）——fib 476µs→211µs，见第十章
-- [ ] IR 优化：常量折叠、死代码消除（未做，暂不需要——见 Q8）
+- [x] IR 优化：常量折叠（D-050 已落地，浅折叠 + 立即数融合兜底，8 项回归全绿）
+- [ ] IR 优化：死代码消除（未做，暂不需要——见 Q8）
 - [x] 字节码序列化 / 反序列化 `.sbc` 缓存（已在阶段 3 落地，见第十章末段；含内存级 API 与实测数据）
 - **交付物**：VM 档在 fib 场景相对 AST 解释器约 22×（4.58ms → 211µs）；循环场景未采集 AST 基线。相对手写 Rust：fib 27.6× / sum_to 8.6×（见 Q8）
 
-### 阶段 3 · 安全边界 + 宿主互操作 + Android 验证 ✅ 功能完成（真机运行待设备）
+### 阶段 3 · 安全边界 + 宿主互操作 + Android 验证 ✅ 已完成（真机 2026-11-21 验证通过，见 Q10 / D-032）
 
 - [x] Opaque 句柄机制（`Handle` 携带 Rust 类型名，脚本只能原样回传，无法构造或读字段）
 - [x] gas 计数（每条指令扣减，默认 1000 万步；「只按控制流步计费」的优化实测负收益已回退，见第十章 D-022）
@@ -581,6 +582,7 @@ call       := ident "(" (expr ("," expr)*)? ")"
 > 倒序追加。格式：`日期 · 变更内容 · 影响范围`
 
 - **2026-11-23** · **CI 落地 + libFuzzer fuzz crate（P1）**：两仓库首次引入 CI 配置。① `miniscript/.github/workflows/ci.yml`：三个 job——全量测试（ubuntu + windows 双平台，`cargo test --all-targets` 含 fuzz 冒烟/双引擎 parity/迁移回归）、release 构建、Android 双 ABI 交叉编译（cargo-ndk + NDK r25c，`readelf` 校验 ELF64/AArch64 与 ELF32/ARM、`nm -D` 校验 `ms_*` 导出符号）；第二个 libFuzzer job（ubuntu nightly + cargo-fuzz，两个 target 各 60s，崩溃样本失败时上传 artifact）。② `miniscript/fuzz/`：cargo-fuzz 标准结构 + 两个 target（`compile` 源码变异、`sbc_decode` 缓存字节变异），把原 `tests/fuzz_smoke.rs` 固定种子冒烟升级为覆盖率引导的常驻 fuzz。**Windows 本机无法编译 libfuzzer-sys 的 C++ 部分**（MinGW g++ 报 `__msan_unpoison_param` 未声明），故 fuzz 仅跑 CI 的 ubuntu；本机保留零依赖冒烟。③ `miniscript/scripts/ci_local.sh`：本机可跑版（`SKIP_CROSS=1` 跳过交叉编译），实测 3 项全绿含真实双 ABI 编译。④ `android_so_demo/.github/workflows/ci.yml`：因 native crate 用 `path` 依赖兄弟目录，checkout 三个仓库复刻本机目录结构（miniscript 暂无 remote，用 `vars.BROOK_REPO` 占位，接远端后生效）；覆盖 native 测试（含 brook_scripts + host_fn_coverage 三道门）、Kotlin 单测、lint、arm64 交叉编译（环境变量覆盖本机硬编码 linker）。⑤ `android_so_demo/scripts/ci_local.ps1`：显式列出三道门 + arm64 交叉编译步骤，并**修复原有 cwd bug**（gradle 步骤未 Push-Location $root，从 WorkBuddy 工作区调用时报 "Directory does not contain a Gradle build"）。实测完整版全绿：Rust 三道门 + arm64 编译 + Kotlin 单测 + lint + 打包。**CI 未启用 `-D warnings` gate**——历史 clippy 警告较多（miniscript 17 处、native 58 处），先保主线常绿，lint 清理单独推进 · `.github/workflows/ci.yml`×2 / `fuzz/` / `scripts/ci_local.sh` / `scripts/ci_local.ps1` / PROJECT_PLAN.md
+- **2026-11-25** · **字节码不可变校验层 + 缓存 v9 + fuzz 语料（D-058，2026-11-26 补记）**：`ValidatedCode` 把结构校验从每次调用移到编译/解码一次，`Engine::call` 不再逐次重扫；低层 `Vm::new` 仍严格校验自造 Program。缓存 VERSION 8→9（codegen 修命名布尔条件融合 / 短路赋值别名 / range 终点快照，旧缓存须整体失效）；宿主指纹绑定 + validate/vm 加严。fuzz 补字典、4 类种子与 support。`cargo check --all-targets` 与 `cargo test` 全绿 · src/{cache,codegen,engine,ir,lib,parser,typecheck,validate,vm}.rs / fuzz/ / 多组 tests / docs/HOST_GUIDE.md / PROJECT_PLAN.md
 - **2026-11-23** · **clippy 清零 + 打开 CI lint gate（D-053）**：把 D-052 留的两处历史 lint 债全部清掉，`-D warnings` 正式成为 CI gate。① miniscript 17 处：`ElseBranch::ElseIf(Stmt)` → `Box<Stmt>`（AST 288→小，6 处使用点同步）、`HostRegistry` derive Default + `is_empty`、`Regs::is_empty`、两个 type alias（`ImportResolver`/`ImportReport`）、needless borrow/lifetime/into_iter/while-let、range 模式、doc 缩进、测试里 hex 分组与 redundant closure。**cargo fmt --all** 另修全库格式（46 文件历史换行风格差异，纯机械无语义）。② native ~45 处：dead_code 30 处全是**迁移后有意保留的 rhai 回滚代码与兼容 helper**——`#[allow(dead_code)]` 文件级 allow + 注释说明理由，不删代码；14 处 doc 缩进、4 处 7/8 元组 type alias、`JVal` 可见性、const thread_local、`cloned()`、range contains、`assert!`、`vec![]`、`mod tests` 移到文件末尾（items-after-test-module）。**cargo fmt --all** 同步修 native 格式。③ gate 落地：两仓库 `.github/workflows/ci.yml` 加 `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` 步骤；本机 `ci_local.sh` / `ci_local.ps1` 同步加两步。验证：miniscript clippy 零错误 + 291 项测试全绿；native clippy 零错误 + 114+1+2 项测试全绿 · PROJECT_PLAN.md / 两仓库 src+tests 全量 / 4 个 CI 配置文件
 - **2026-11-23** · **宿主取消钩子（D-051，so_demo → brook 切换前置）**：rhai 有 `on_progress` 每 65536 步回查 `cancelled()`，纯算术死循环（`while true {}` 不调宿主函数）在 brook 侧原本只能靠 1 亿步 gas 兜底——停止按钮对这类脚本近乎无效，属发动机"开了停不下来"的安全漏洞。本轮在引擎侧补齐：`Engine::set_cancel_hook(Fn() -> bool)` 可选注入；VM 每 65536 指令走一次 `#[cold] #[inline(never)]` 探测，命中即返回带源码位置的停止错误；`Error::cancelled` / `Error::is_cancelled()` 结构化识别——**刻意不改 `ErrorKind`、不动 C ABI**，宿主可按 `is_cancelled()` 映射中文文案而非匹配字符串。**性能关键决策**：初版把 `if steps >= next_cancel_check` 直接留在 dispatch 循环里（无钩子时恒假但每步仍比较），同二进制 A/B 实测 VM fib(18) 173→201µs（**+16% 真实回退**，Criterion 判 significant）；改为 `run<const CANCEL: bool>()` 泛型双实例，按 `cancel.is_some()` 在 `call` 处分流，无钩子实例在编译期折叠掉整个探测——复测 **154.9µs**，回到基线（154.69µs）水位。门禁 compile 1.001× / VM 1.023×，无钩子路径**零开销、行为不变**；有钩子路径延迟上限 = 65536 指令（与 rhai 同间隔）。新增 `tests/cancel.rs` 7 项（纯算术死循环可停、探测分摊不逐指令、gas 仍生效、停止态每轮自动清零、调用栈可渲染、宿主函数报错整段中断、无钩子行为不变）。**291 项全绿**（284 → +7），debug/release 双通过，改动文件零 clippy 警告 · error.rs / vm.rs / engine.rs / tests/cancel.rs / PROJECT_PLAN.md
 - **2026-11-22** · **常量折叠（D-050）——另一会话实现、本会话修复接入方式**：codegen 增加字面量常量折叠（`FoldVal`/`fold_binary`，checked 溢出/零除保持运行时错误语义、f64 IEEE 值相等对齐 D-049）+ `tests/constant_folding.rs` 8 项。**卡点与修复**：初版在 `compile_expr` 入口对**每个表达式节点做整树递归折叠重试**——变量左深链上每层重遍历整棵子树（O(n²)），实测 compile fib 9.5→~14µs（**回退 ~40%**，perf 门禁 WARN 1.44×），且曾把 perf 基线整体上抬 23% 以求过线（已恢复原基线——基线门禁的用途是暴露回退，不是吸收回退）。修复：接入改 **O(1) 浅折叠**（`fold_shallow`，仅"操作数为直接字面量"的二元/一元折叠；递归版保留给 `compile_cond_false` 的立即数比较路径——非字面量是 O(1) None 快路径），深层字面量链由既有 `AddI64Imm` 立即数融合兜底（语义等价）。门禁回绿：compile_fib ratio 1.137 OK / vm_fib18 1.120 OK（原基线 9.49/154.69）。**284 项全绿**（+8：constant_folding；含浅折叠语义修正——深字面量树不再 AST 级全折的取舍钉进测试注释）· codegen.rs / tests/constant_folding.rs / scripts/perf_baseline.env（恢复）/ PROJECT_PLAN.md
@@ -1116,6 +1118,22 @@ call       := ident "(" (expr ("," expr)*)? ")"
 **验证**：JVM **490 单测全绿**（0 失败，含后缀契约反向断言）；Kotlin 编译通过（`BUILD SUCCESSFUL`）。
 
 **范围边界**：仓库内 `scripts/*.rhai`（25 个探针）、`.push/`、`.tmp_push/rev_scripts/`（16 个临时脚本）为 `.gitignore` 的历史资产，用户早前拍板保留且此次未要求删除，未动。App 已不再识别它们，但磁盘文件仍在。
+
+---
+
+### 2026-11-25 · 字节码不可变校验层 + 缓存 v9 + fuzz 语料（D-058）
+
+**背景**：`Engine::call` 每次调用都对字节码重做结构校验（O(code)），而编译/解码路径本已有 `validate.rs` 一道；调用热路径重复扫属于无谓开销。同时 `.sbc` 需要抵御构造恶意字节的解码攻击，fuzz 只有零依赖冒烟、缺真实语料与字典。
+
+**决策**：
+1. **校验一次、后续只读**：新增 `ValidatedCode` 包装——编译与缓存解码时完成全部结构校验，`Script.code` 改为只读持有；`Engine::call` 不再逐次重扫。低层 `Vm::new` 面对调用方自造 `Program` 时仍严格校验（不降低安全线）。
+2. **缓存 v9**：`VERSION` 8→9。同期 codegen 修了三处真实语义问题——命名布尔条件融合、短路赋值别名、range 终点快照——旧缓存以旧语义生成，必须整体失效重建。
+3. **宿主指纹 + 校验加严**：`Script` 与宿主指纹绑定，`validate` / `vm` 边界加严，堵住跨宿主按槽位 id 误调与坏字节码越界。
+4. **fuzz 语料**：`fuzz/compile.dict` 字典 + 4 类种子（arrays / booleans / control_flow / strings）+ `support.rs` 公共构造，两个 target（compile 源码变异、sbc_decode 字节变异）扩充回归。
+
+**验证**：`cargo check --all-targets` 通过；`cargo test` 全绿（0 失败），`security_regression` / `eval_parity` / `fuzz_smoke` / `cache` / `depth` / `dst_hint` / `import_stmt` 均有扩充。
+
+**记账说明**：本条为 2026-11-26 文档审计补记——提交 `32c7aec`（11-25 14:06）已落地但活文档当时漏记，导致第九章/第十章与代码历史脱节。
 
 ---
 
